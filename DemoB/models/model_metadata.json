@@ -1,0 +1,24 @@
+{
+  "model": "RandomForestClassifier",
+  "training_data": "seeded synthetic multi-scenario behavior",
+  "training_seed": 9001,
+  "rows": 4000,
+  "positive_threshold": 0.65,
+  "scenario_types": [
+    "routine_point_lookup",
+    "legitimate_bulk_report",
+    "offhours_maintenance",
+    "rapid_id_enumeration",
+    "department_sweep",
+    "afterhours_bulk_access",
+    "low_and_slow_targeting"
+  ],
+  "feature_order": [
+    "result_count",
+    "hour",
+    "target_table_count",
+    "query_frequency",
+    "query_duration_ms",
+    "is_department_query"
+  ]
+}

@@ -1,0 +1,34 @@
+-- Run as MySQL administrator AFTER employee and honeytoken_security_b exist.
+-- Replace each password placeholder before execution. Use strong unique passwords.
+CREATE USER IF NOT EXISTS 'demo_reader_b'@'localhost'
+    IDENTIFIED BY 'REPLACE_WITH_READER_PASSWORD';
+CREATE USER IF NOT EXISTS 'honey_seeder_b'@'localhost'
+    IDENTIFIED BY 'REPLACE_WITH_SEEDER_PASSWORD';
+CREATE USER IF NOT EXISTS 'honey_monitor_b'@'localhost'
+    IDENTIFIED BY 'REPLACE_WITH_MONITOR_PASSWORD';
+CREATE USER IF NOT EXISTS 'honey_placement_b'@'localhost'
+    IDENTIFIED BY 'REPLACE_WITH_PLACEMENT_PASSWORD';
+
+GRANT SELECT ON employee.* TO 'demo_reader_b'@'localhost';
+
+GRANT SELECT, INSERT ON employee.* TO 'honey_seeder_b'@'localhost';
+GRANT SELECT, INSERT ON honeytoken_security_b.honeytoken_registry
+    TO 'honey_seeder_b'@'localhost';
+
+GRANT SELECT ON honeytoken_security_b.honeytoken_registry
+    TO 'honey_monitor_b'@'localhost';
+GRANT INSERT ON honeytoken_security_b.access_events
+    TO 'honey_monitor_b'@'localhost';
+GRANT INSERT ON honeytoken_security_b.security_alerts
+    TO 'honey_monitor_b'@'localhost';
+GRANT INSERT ON honeytoken_security_b.experiment_runs
+    TO 'honey_monitor_b'@'localhost';
+GRANT INSERT ON honeytoken_security_b.experiment_query_results
+    TO 'honey_monitor_b'@'localhost';
+
+GRANT SELECT ON employee.department TO 'honey_placement_b'@'localhost';
+GRANT SELECT, UPDATE ON employee.dept_emp TO 'honey_placement_b'@'localhost';
+GRANT SELECT, UPDATE ON honeytoken_security_b.honeytoken_registry
+    TO 'honey_placement_b'@'localhost';
+GRANT INSERT, UPDATE ON honeytoken_security_b.placement_update_history
+    TO 'honey_placement_b'@'localhost';

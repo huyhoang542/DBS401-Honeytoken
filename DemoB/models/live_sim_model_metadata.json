@@ -1,0 +1,49 @@
+{
+  "model": "RandomForestClassifier",
+  "training_source": "SELECT telemetry captured from local MySQL employee database",
+  "labels": "controlled scenario ground truth assigned by the simulator; not production incident labels",
+  "rows": 980,
+  "sessions": 40,
+  "scenario_families": 8,
+  "features": [
+    "result_count",
+    "hour",
+    "target_table_count",
+    "query_frequency",
+    "query_duration_ms",
+    "is_department_query"
+  ],
+  "threshold": 0.986465531270342,
+  "threshold_selection": "OOF session scores; maximize recall/F1 subject to session FPR <= 10%",
+  "calibration_session_metrics": {
+    "sessions": 40,
+    "TP": 25,
+    "TN": 15,
+    "FP": 0,
+    "FN": 0,
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "false_positive_rate": 0.0
+  },
+  "evaluation": "Nested validation: threshold tuned on four repeats, evaluated on untouched fifth repeat; rotated across five repeats",
+  "evaluation_thresholds_by_repeat": {
+    "1": 0.98,
+    "2": 0.9753827731092437,
+    "3": 0.975,
+    "4": 0.9949603174603174,
+    "5": 0.9727332275952557
+  },
+  "scenarios": [
+    "broad_employee_collection",
+    "department_sweep",
+    "legitimate_bulk_report",
+    "low_and_slow_targeting",
+    "maintenance_read",
+    "rapid_id_enumeration",
+    "routine_point_lookup",
+    "token_probe_validation"
+  ],
+  "warning": "Controlled lab evidence only. Do not claim real-world attack efficacy."
+}

@@ -1,0 +1,18 @@
+# Secrets and local configuration
+.env
+**/.env
+!.env.example
+
+# Python environments and cache
+**/.venv/
+**/__pycache__/
+*.py[cod]
+
+# Local Git metadata from the existing Demo A checkout
+DemoA/.git/
+
+# Local databases and generated mutable state
+**/results/*.sqlite3
+**/results/placement_history.csv
+.DS_Store
+Thumbs.db
