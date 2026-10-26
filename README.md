@@ -16,6 +16,3 @@ Hai demo dùng Employee Sample Database làm dữ liệu mục tiêu và đượ
 3. Xem [kết quả đối chiếu](DemoB/comparison/RESULTS.md) và [nguồn dữ liệu/phương pháp](DemoB/comparison/PAPER_AND_TRAINING_DATA.md).
 4. Tài liệu tổng hợp: [Nguồn dữ liệu và kết quả demo](Nguon_du_lieu_va_ket_qua_demo_Honeytoken.docx).
 
-## Bảo mật và dữ liệu
-
-Không commit `.env`, mật khẩu, virtualenv hoặc dữ liệu nhạy cảm. Hãy tạo `.env` từ `.env.example` theo hướng dẫn của từng demo. Bộ Employee Sample Database là dữ liệu mẫu công khai; không đưa dữ liệu production vào repository.
