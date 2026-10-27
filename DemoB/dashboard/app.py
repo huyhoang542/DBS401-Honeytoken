@@ -1,3 +1,4 @@
+"""Vietnamese dashboard for the Demo B upgrade and its A baseline."""
 from pathlib import Path
 import json
 import sys
@@ -10,131 +11,374 @@ sys.path.insert(0, str(ROOT))
 from ml.risk_model import score_behavior  # noqa: E402
 from monitoring.behavior_store import latest_events  # noqa: E402
 
-st.set_page_config(page_title="Adaptive Honeytoken — Demo B", layout="wide")
-st.title("Adaptive Honeytoken — Demo B")
-st.caption("Controlled-lab MySQL telemetry, supervised risk scoring, and adaptive placement")
+st.set_page_config(page_title="Honeytoken thích nghi — Demo B", layout="wide")
+st.title("Honeytoken thích nghi — Demo B")
+st.caption(
+    "Demo A là baseline tham chiếu theo bài báo; Demo B là phần nâng cấp của đồ án. "
+    "Chọn tab để không trộn kết quả từ các nguồn dữ liệu khác nhau."
+)
 
-st.subheader("Live MySQL attack-scenario comparison")
-live_metrics_path = ROOT / "results" / "live_attack_metrics.json"
-live_sessions_path = ROOT / "results" / "live_attack_session_results.csv"
-live_scenarios_path = ROOT / "results" / "live_attack_scenario_metrics.csv"
-if live_metrics_path.exists() and live_sessions_path.exists():
-    live = json.loads(live_metrics_path.read_text(encoding="utf-8"))
-    summary = live.get("session_level_metrics", {})
-    if summary:
-        order = [
+SCENARIO_VI = {
+    "routine_point_lookup": "Tra cứu ID thông thường",
+    "legitimate_bulk_report": "Báo cáo hàng loạt hợp lệ",
+    "maintenance_read": "Đọc dữ liệu bảo trì",
+    "rapid_id_enumeration": "Dò ID nhanh",
+    "department_sweep": "Quét phòng ban",
+    "broad_employee_collection": "Thu thập rộng dữ liệu nhân viên",
+    "low_and_slow_targeting": "Dò tìm chậm (low-and-slow)",
+    "token_probe_validation": "Kiểm tra token canary",
+    "afterhours_bulk_access": "Truy cập hàng loạt ngoài giờ",
+    "offhours_maintenance": "Bảo trì ngoài giờ",
+}
+DETECTOR_VI = {
+    "static": "A — token tĩnh",
+    "ml": "B — Random Forest",
+    "ml_or_token": "B — Random Forest kết hợp token",
+    "A_static_honeytoken": "A — mốc đối chứng token tĩnh",
+    "B_random_forest": "B — Random Forest",
+    "B_random_forest_plus_honeytoken": "B — Random Forest kết hợp token",
+}
+METRIC_VI = {
+    "sessions": "Số phiên (phiên)",
+    "queries": "Số truy vấn (truy vấn)",
+    "accuracy": "Tỷ lệ phân loại đúng — Accuracy (%)",
+    "precision": "Độ chính xác cảnh báo — Precision (%)",
+    "recall": "Tỷ lệ phát hiện — Recall (%)",
+    "f1": "Điểm F1 (0–1)",
+    "f1_score": "Điểm F1 (0–1)",
+    "false_positive_rate": "Tỷ lệ báo động giả (%)",
+    "TP": "TP — phát hiện đúng (phiên)",
+    "TN": "TN — loại đúng (phiên)",
+    "FP": "FP — báo nhầm (phiên)",
+    "FN": "FN — bỏ sót (phiên)",
+}
+
+
+def scenario_name(value):
+    return SCENARIO_VI.get(value, value)
+
+
+def method_name(value):
+    return DETECTOR_VI.get(value, value)
+
+
+def label_name(value):
+    try:
+        return "Đáng ngờ mô phỏng" if int(value) == 1 else "Bình thường"
+    except (TypeError, ValueError):
+        return value
+
+
+def translated_columns(frame, mapping):
+    return frame.rename(columns={key: value for key, value in mapping.items() if key in frame.columns})
+
+
+def show_metric_table(summary, methods, count_key):
+    rows = []
+    for key in methods:
+        if key not in summary:
+            continue
+        metric = summary[key]
+        rows.append({
+            "Phương pháp": method_name(key),
+            f"Số mẫu ({'phiên' if count_key == 'sessions' else 'truy vấn'})": metric.get(count_key, 0),
+            "TP — phát hiện đúng (phiên)": metric.get("TP", 0),
+            "TN — loại đúng (phiên)": metric.get("TN", 0),
+            "FP — báo nhầm (phiên)": metric.get("FP", 0),
+            "FN — bỏ sót (phiên)": metric.get("FN", 0),
+            METRIC_VI["accuracy"]: metric.get("accuracy", 0),
+            METRIC_VI["precision"]: metric.get("precision", 0),
+            METRIC_VI["recall"]: metric.get("recall", 0),
+            METRIC_VI["f1"]: metric.get("f1", metric.get("f1_score", 0)),
+            "Tỷ lệ báo động giả (%)": metric.get("false_positive_rate", 0),
+        })
+    if rows:
+        frame = pd.DataFrame(rows)
+        pct = [METRIC_VI["accuracy"], METRIC_VI["precision"], METRIC_VI["recall"], "Tỷ lệ báo động giả (%)"]
+        st.dataframe(frame.style.format({**{column: "{:.1%}" for column in pct}, METRIC_VI["f1"]: "{:.3f}"}),
+                     use_container_width=True, hide_index=True)
+        st.caption("TP/TN/FP/FN và số mẫu được tính theo phiên hoặc truy vấn theo tên cột. F1 là điểm từ 0 đến 1.")
+
+
+def load_csv(path):
+    return pd.read_csv(path) if path.exists() else pd.DataFrame()
+
+
+tab_live, tab_synth, tab_ops = st.tabs([
+    "1. So sánh MySQL lab",
+    "2. Benchmark tổng hợp",
+    "3. Vận hành Demo B",
+])
+
+with tab_live:
+    st.header("So sánh trên truy vấn MySQL lab")
+    st.write("Đây là dữ liệu thu từ các câu SELECT chạy trên cơ sở dữ liệu mẫu cục bộ. So sánh chính: Demo A tĩnh với Demo B Random Forest, ở mức phiên kiểm thử.")
+    live_metrics_path = ROOT / "results" / "live_attack_metrics.json"
+    live_sessions_path = ROOT / "results" / "live_attack_session_results.csv"
+    live_scenarios_path = ROOT / "results" / "live_attack_scenario_metrics.csv"
+    live_queries_path = ROOT / "results" / "live_attack_query_results.csv"
+    if live_metrics_path.exists() and live_sessions_path.exists():
+        live = json.loads(live_metrics_path.read_text(encoding="utf-8"))
+        summary = live.get("session_level_metrics", {})
+        show_metric_table(summary, [
             "Demo A static honeytoken",
             "Demo B live-telemetry Random Forest",
-            "Demo B Random Forest OR token hit",
-        ]
-        rows = []
-        for method in order:
-            if method in summary:
-                row = {"Method": method, **summary[method]}
-                rows.append(row)
-        comparison = pd.DataFrame(rows).rename(columns={
-            "sessions": "Sessions", "accuracy": "Accuracy", "precision": "Precision",
-            "recall": "Recall", "f1": "F1", "false_positive_rate": "False positive rate",
-            "TP": "TP", "TN": "TN", "FP": "FP", "FN": "FN",
-        })
-        st.dataframe(comparison.style.format({
-            "Accuracy": "{:.1%}", "Precision": "{:.1%}", "Recall": "{:.1%}",
-            "F1": "{:.3f}", "False positive rate": "{:.1%}",
-        }), use_container_width=True, hide_index=True)
-    st.caption(
-        f"Source: {live.get('source', 'unknown')}. "
-        f"Labels: {live.get('label_policy', 'scenario labels')}. "
-        "Demo B features come from executed MySQL SELECTs; labels come from the controlled scenario script, not real incident reports."
-    )
-    if live_scenarios_path.exists():
-        by_scenario = pd.read_csv(live_scenarios_path)
-        if not by_scenario.empty:
-            by_scenario["Detector"] = by_scenario.apply(
-                lambda row: f"{row['demo']} — {row['detector']}", axis=1
-            )
-            family_table = by_scenario.pivot_table(
-                index="scenario_type", columns="Detector",
-                values="session_alert_rate", aggfunc="first",
-            )
-            st.markdown("**Alert rate by scenario family**")
-            st.dataframe(family_table.style.format("{:.0%}"), use_container_width=True)
-            st.bar_chart(family_table)
-    if live_sessions_path.exists():
-        st.download_button(
-            "Download session comparison CSV",
-            data=live_sessions_path.read_bytes(),
-            file_name="live_attack_session_results.csv",
-            mime="text/csv",
-        )
-else:
-    st.info(
-        "Run `python evaluation/run_live_attack_simulation.py --capture-only`, "
-        "then `python evaluation/train_live_model.py` to build this live comparison."
-    )
-st.caption("This is controlled-lab evidence; the rates do not estimate production performance.")
-
-st.subheader("A/B benchmark comparison")
-metrics_path = ROOT / "results" / "ab_metrics.csv"
-if metrics_path.exists():
-    comparison = pd.read_csv(metrics_path)
-    comparison = comparison.rename(columns={
-        "model": "Method", "accuracy": "Accuracy", "precision": "Precision",
-        "recall": "Recall", "f1_score": "F1", "false_positive_rate": "FPR",
-        "mean_prediction_latency_ms": "Mean latency (ms)"})
-    st.dataframe(comparison.style.format({
-        "Accuracy": "{:.1%}", "Precision": "{:.1%}", "Recall": "{:.1%}",
-        "F1": "{:.3f}", "FPR": "{:.1%}", "Mean latency (ms)": "{:.4f}"
-    }), use_container_width=True, hide_index=True)
-    st.caption("Five held-out runs on the same seeded scenario cases. These are synthetic behavior scenarios; see comparison/RESULTS.md for details.")
-    scenario_path = ROOT / "results" / "ab_scenario_metrics.csv"
-    if scenario_path.exists():
-        with st.expander("Results by test scenario"):
-            by_scenario = pd.read_csv(scenario_path).rename(columns={
-                "scenario_type": "Scenario", "model": "Method",
-                "scenario_count": "Cases", "actual_label": "Suspicious (1)",
-                "alert_rate": "Alert rate", "correct_rate": "Correct rate"})
-            st.dataframe(by_scenario.style.format({"Alert rate": "{:.1%}", "Correct rate": "{:.1%}"}),
-                         use_container_width=True, hide_index=True)
-else:
-    st.info("Run python evaluation/run_common_scenarios.py to generate the shared A/B scenario tables.")
-left, right = st.columns(2)
-with left:
-    st.subheader("Behavior risk scorer")
-    count = st.slider("Rows returned", 1, 500, 25)
-    hour = st.slider("Access hour", 0, 23, 14)
-    tables = st.slider("Tables touched", 1, 5, 2)
-    freq = st.slider("Recent query frequency", 1, 300, 20)
-    duration = st.slider("Query duration (ms)", 1, 1000, 80)
-    dept_query = st.checkbox("Department query", value=True)
-    features = {"result_count": count, "hour": hour, "target_table_count": tables,
-                "query_frequency": freq, "query_duration_ms": duration,
-                "is_department_query": int(dept_query)}
-    result = score_behavior(features)
-    st.metric("Model risk", f"{result['score']:.1%}", result["label"])
-    model_metadata_path = ROOT / "models" / "live_sim_model_metadata.json"
-    if model_metadata_path.exists():
-        model_metadata = json.loads(model_metadata_path.read_text(encoding="utf-8"))
+        ], "sessions")
         st.caption(
-            f"Loaded model: {model_metadata.get('model', 'unknown')} · "
-            f"{model_metadata.get('rows', 0)} lab query rows · "
-            f"{model_metadata.get('sessions', 0)} sessions · calibrated threshold {model_metadata.get('threshold', 0.65):.2f} · "
-            f"calibration FPR {model_metadata.get('calibration_session_metrics', {}).get('false_positive_rate', 0):.1%}"
+            f"Nguồn telemetry: {live.get('source', 'MySQL cục bộ')}; "
+            f"database dùng chung: {live.get('shared_dataset', 'employee')}. "
+            "Nhãn do script kịch bản gán, không phải nhãn sự cố thực tế."
         )
-        st.info("The features are captured from local MySQL queries. Training labels are controlled scenario labels; this score is not a validated attack probability.")
+        st.info("Kết quả chỉ phản ánh kịch bản lab đã chạy; không dùng các tỷ lệ này làm ước lượng hiệu quả trong môi trường sản xuất.")
+
+        scenario_df = load_csv(live_scenarios_path)
+        if not scenario_df.empty:
+            main_scenarios = scenario_df[scenario_df["detector"].isin(["static", "ml"])].copy()
+            main_scenarios["Kịch bản"] = main_scenarios["scenario_type"].map(scenario_name)
+            main_scenarios["Nhãn kiểm thử"] = main_scenarios["actual_label"].map(label_name)
+            main_scenarios["Phương pháp"] = main_scenarios["detector"].map(method_name)
+            main_scenarios["Số phiên (phiên)"] = main_scenarios["sessions"]
+            main_scenarios["Tỷ lệ cảnh báo (%)"] = main_scenarios["session_alert_rate"]
+            table = main_scenarios.pivot(index=["Kịch bản", "Nhãn kiểm thử", "Số phiên (phiên)"],
+                                         columns="Phương pháp", values="Tỷ lệ cảnh báo (%)").reset_index()
+            table.columns.name = None
+            st.subheader("Kết quả theo từng kịch bản")
+            st.dataframe(table.style.format({column: "{:.1%}" for column in table.columns if column.startswith("A —") or column.startswith("B —")}),
+                         use_container_width=True, hide_index=True)
+            st.caption("Với kịch bản bình thường, tỷ lệ cảnh báo là tỷ lệ báo động giả. Với kịch bản đáng ngờ, đó là tỷ lệ phát hiện. Mỗi kịch bản có 5 phiên.")
+
+        with st.expander("Thử nghiệm phụ: B kết hợp Random Forest với token hit"):
+            if summary.get("Demo B Random Forest OR token hit"):
+                show_metric_table(summary, ["Demo B Random Forest OR token hit"], "sessions")
+                st.caption("Đây là ablation phụ; bảng so sánh chính phía trên chỉ giữ baseline A và mô hình nâng cấp B.")
+            else:
+                st.info("Chưa có metric cho biến thể kết hợp token.")
+
+        session_df = load_csv(live_sessions_path)
+        if not session_df.empty:
+            st.subheader("Log kết quả từng phiên/kịch bản")
+            family_values = sorted(session_df["scenario_type"].dropna().unique())
+            selected_family = st.selectbox("Lọc kịch bản", ["Tất cả"] + family_values,
+                                          format_func=lambda value: "Tất cả kịch bản" if value == "Tất cả" else scenario_name(value),
+                                          key="live_family")
+            filtered = session_df.copy()
+            if selected_family != "Tất cả":
+                filtered = filtered[filtered["scenario_type"] == selected_family]
+            filtered["Lượt"] = filtered["session_id"].str.extract(r"^r(\d+)-", expand=False).astype(int)
+            paired = filtered.pivot(index=["Lượt", "scenario_type", "actual_label"], columns="demo",
+                                    values=["query_count", "A_static_alert", "B_ml_alert", "B_ml_or_token_alert"])
+            paired.columns = [f"{value} — {demo}" for value, demo in paired.columns]
+            paired = paired.reset_index().rename(columns={
+                "scenario_type": "Kịch bản", "actual_label": "Nhãn kiểm thử (0=bình thường, 1=đáng ngờ)",
+                "query_count — Demo A": "Số truy vấn A (truy vấn)",
+                "query_count — Demo B": "Số truy vấn B (truy vấn)",
+                "A_static_alert — Demo A": "A cảnh báo (0/1)",
+                "B_ml_alert — Demo B": "B cảnh báo (0/1)",
+                "B_ml_or_token_alert — Demo B": "B + token cảnh báo (0/1)",
+            })
+            paired["Kịch bản"] = paired["Kịch bản"].map(scenario_name)
+            paired["Nhãn kiểm thử (0=bình thường, 1=đáng ngờ)"] = paired["Nhãn kiểm thử (0=bình thường, 1=đáng ngờ)"].map(label_name)
+            columns = ["Lượt", "Kịch bản", "Nhãn kiểm thử (0=bình thường, 1=đáng ngờ)",
+                       "Số truy vấn A (truy vấn)", "A cảnh báo (0/1)",
+                       "Số truy vấn B (truy vấn)", "B cảnh báo (0/1)", "B + token cảnh báo (0/1)"]
+            st.dataframe(paired[[column for column in columns if column in paired]],
+                         use_container_width=True, hide_index=True)
+            st.caption("Mỗi dòng ghép cùng kịch bản và lượt lặp giữa hai demo. Cột B + token là phân tích phụ; 0 nghĩa là không cảnh báo, 1 là có cảnh báo.")
+            st.download_button("Tải log phiên đã ghép A/B (CSV)", paired[columns].to_csv(index=False).encode("utf-8-sig"),
+                               file_name="log_phien_mysql_lab_da_ghep.csv", mime="text/csv", key="dl_live_sessions")
+
+        query_df = load_csv(live_queries_path)
+        if not query_df.empty:
+            with st.expander("Log telemetry từng truy vấn SELECT"):
+                q_family_values = sorted(query_df["scenario_type"].dropna().unique())
+                q_family = st.selectbox("Kịch bản trong log truy vấn", ["Tất cả"] + q_family_values,
+                                        format_func=lambda value: "Tất cả kịch bản" if value == "Tất cả" else scenario_name(value),
+                                        key="live_query_family")
+                q_demo = st.selectbox("Demo trong log truy vấn", ["Tất cả", "Demo A", "Demo B"], key="live_query_demo")
+                q_repeat = st.selectbox("Lượt lặp", ["Tất cả"] + sorted(query_df["repeat"].unique().tolist()), key="live_query_repeat")
+                q_filtered = query_df.copy()
+                if q_family != "Tất cả":
+                    q_filtered = q_filtered[q_filtered["scenario_type"] == q_family]
+                if q_demo != "Tất cả":
+                    q_filtered = q_filtered[q_filtered["demo"] == q_demo]
+                if q_repeat != "Tất cả":
+                    q_filtered = q_filtered[q_filtered["repeat"] == q_repeat]
+                q_filtered["scenario_type"] = q_filtered["scenario_type"].map(scenario_name)
+                q_filtered["actual_label"] = q_filtered["actual_label"].map(label_name)
+                q_filtered = translated_columns(q_filtered, {
+                    "demo": "Demo", "repeat": "Lượt lặp", "session_id": "ID phiên",
+                    "scenario_type": "Kịch bản", "actual_label": "Nhãn kiểm thử",
+                    "scenario_id": "ID truy vấn", "result_count": "Số dòng trả về (dòng)",
+                    "hour": "Giờ tại máy (0–23)", "target_table_count": "Số bảng mục tiêu (bảng)",
+                    "query_frequency": "Thứ tự truy vấn trong phiên (truy vấn)",
+                    "query_duration_ms": "Thời lượng (ms)",
+                    "is_department_query": "Truy vấn phòng ban (0/1)",
+                    "static_honeytoken_hit": "Token hit (0/1)", "hit_count": "Số token hit (token)",
+                    "query_type": "Loại truy vấn", "risk_score": "Điểm rủi ro (0–1)",
+                    "ml_predicted_label": "Dự đoán ML theo truy vấn (0/1)",
+                })
+                st.dataframe(q_filtered, use_container_width=True, hide_index=True)
+                st.download_button("Tải log truy vấn đang lọc (CSV)", q_filtered.to_csv(index=False).encode("utf-8-sig"),
+                                   file_name="log_truy_van_mysql_lab.csv", mime="text/csv", key="dl_live_queries")
+                st.caption("Đơn vị thời lượng là mili giây (ms); giờ là giờ tại máy khi chạy. Nếu log có cột dự đoán ML, đó là dự đoán giữ lại ngoài fold (out-of-fold); nếu không có, mô hình chỉ được báo cáo ở mức phiên.")
     else:
-        st.info("No live-trained model metadata found. The fallback score is only a preview; run the capture and training commands above.")
-with right:
-    st.subheader("Recent gateway predictions")
-    recent = latest_events(50)
-    if recent:
-        st.dataframe(pd.DataFrame(recent), use_container_width=True)
+        st.info("Chưa có kết quả MySQL lab. Từ thư mục DemoB chạy: `python evaluation\\run_live_attack_simulation.py --capture-only`, sau đó `python evaluation\\train_live_model.py`.")
+
+with tab_synth:
+    st.header("Benchmark hành vi tổng hợp")
+    st.write("Tab này dùng các mẫu hành vi do NumPy tạo để so sánh thuật toán; không đọc log truy vấn MySQL thật. Không gộp số liệu ở tab này với tab MySQL lab.")
+    metrics_path = ROOT / "results" / "ab_metrics.csv"
+    scenario_path = ROOT / "results" / "ab_scenario_metrics.csv"
+    query_path = ROOT / "results" / "ab_query_results.csv"
+    if metrics_path.exists():
+        synthetic_metrics = pd.read_csv(metrics_path)
+        main_methods = synthetic_metrics[synthetic_metrics["model"].isin(["A_static_honeytoken", "B_random_forest"])].copy()
+        main_methods["Phương pháp"] = main_methods["model"].map(method_name)
+        main_methods = main_methods.rename(columns={
+            "accuracy": METRIC_VI["accuracy"], "precision": METRIC_VI["precision"], "recall": METRIC_VI["recall"],
+            "f1_score": METRIC_VI["f1_score"], "false_positive_rate": "Tỷ lệ báo động giả (%)",
+            "mean_prediction_latency_ms": "Thời gian chấm điểm trung bình (ms/truy vấn)",
+        })
+        display_columns = ["Phương pháp", METRIC_VI["accuracy"], METRIC_VI["precision"], METRIC_VI["recall"], METRIC_VI["f1_score"],
+                           "Tỷ lệ báo động giả (%)", "Thời gian chấm điểm trung bình (ms/truy vấn)"]
+        st.dataframe(main_methods[[column for column in display_columns if column in main_methods]].style.format({
+            METRIC_VI["accuracy"]: "{:.1%}", METRIC_VI["precision"]: "{:.1%}", METRIC_VI["recall"]: "{:.1%}",
+            METRIC_VI["f1_score"]: "{:.3f}", "Tỷ lệ báo động giả (%)": "{:.1%}",
+            "Thời gian chấm điểm trung bình (ms/truy vấn)": "{:.4f}",
+        }), use_container_width=True, hide_index=True)
+        st.caption("Năm lần chia train/test; mỗi lần đánh giá trên 600 mẫu giữ lại. Độ trễ là thời gian suy luận trong tiến trình, đơn vị ms/truy vấn; không gồm thời gian MySQL.")
+        st.warning("Các đặc trưng, nhãn và tỷ lệ token hit của benchmark này đều được sinh/mô phỏng bằng chương trình; đây không phải kết quả trên traffic thực.")
+
+        synth_scenarios = load_csv(scenario_path)
+        if not synth_scenarios.empty:
+            main_scenarios = synth_scenarios[synth_scenarios["model"].isin(["A_static_honeytoken", "B_random_forest"])].copy()
+            main_scenarios["Kịch bản"] = main_scenarios["scenario_type"].map(scenario_name)
+            main_scenarios["Nhãn"] = main_scenarios["actual_label"].map(label_name)
+            main_scenarios["Phương pháp"] = main_scenarios["model"].map(method_name)
+            main_scenarios["Số mẫu (mẫu)"] = main_scenarios["scenario_count"]
+            main_scenarios["Tỷ lệ cảnh báo (%)"] = main_scenarios["alert_rate"]
+            table = main_scenarios.pivot(index=["Kịch bản", "Nhãn", "Số mẫu (mẫu)"], columns="Phương pháp",
+                                         values="Tỷ lệ cảnh báo (%)").reset_index()
+            table.columns.name = None
+            st.subheader("Kết quả theo từng kịch bản tổng hợp")
+            st.dataframe(table.style.format({column: "{:.1%}" for column in table.columns if column.startswith("A —") or column.startswith("B —")}),
+                         use_container_width=True, hide_index=True)
+            st.caption("Mỗi kịch bản tổng hợp có số mẫu ghi trong bảng. Với nhãn bình thường, tỷ lệ cảnh báo là báo động giả; với nhãn đáng ngờ, là tỷ lệ phát hiện.")
+
+        with st.expander("Thử nghiệm phụ: Random Forest kết hợp honeytoken"):
+            optional = synthetic_metrics[synthetic_metrics["model"] == "B_random_forest_plus_honeytoken"].copy()
+            if not optional.empty:
+                optional["Phương pháp"] = optional["model"].map(method_name)
+                optional = optional.rename(columns={
+                    "accuracy": METRIC_VI["accuracy"], "precision": METRIC_VI["precision"], "recall": METRIC_VI["recall"],
+                    "f1_score": METRIC_VI["f1_score"], "false_positive_rate": "Tỷ lệ báo động giả (%)",
+                    "mean_prediction_latency_ms": "Thời gian chấm điểm trung bình (ms/truy vấn)",
+                })
+                st.dataframe(optional[[column for column in display_columns if column in optional]].style.format({
+                    METRIC_VI["accuracy"]: "{:.1%}", METRIC_VI["precision"]: "{:.1%}", METRIC_VI["recall"]: "{:.1%}",
+                    METRIC_VI["f1_score"]: "{:.3f}", "Tỷ lệ báo động giả (%)": "{:.1%}",
+                    "Thời gian chấm điểm trung bình (ms/truy vấn)": "{:.4f}",
+                }), use_container_width=True, hide_index=True)
+                st.caption("Đây là phân tích phụ, không phải phương pháp chính được dùng để tuyên bố Demo B nâng cấp.")
+            else:
+                st.info("Không tìm thấy dòng kết quả cho biến thể phụ.")
+
+        query_df = load_csv(query_path)
+        if not query_df.empty:
+            st.subheader("Log dự đoán từng mẫu trong từng kịch bản")
+            families = sorted(query_df["scenario_type"].dropna().unique())
+            family = st.selectbox("Lọc kịch bản tổng hợp", ["Tất cả"] + families,
+                                  format_func=lambda value: "Tất cả kịch bản" if value == "Tất cả" else scenario_name(value),
+                                  key="synth_family")
+            model_choices = ["A_static_honeytoken", "B_random_forest"]
+            if "B_random_forest_plus_honeytoken" in set(query_df["model"]):
+                model_choices.append("B_random_forest_plus_honeytoken")
+            selected_model = st.selectbox("Phương pháp trong log", model_choices, format_func=method_name, key="synth_model")
+            repeat = st.selectbox("Lượt benchmark", ["Tất cả"] + sorted(query_df["repeat"].unique().tolist()), key="synth_repeat")
+            filtered = query_df[query_df["model"] == selected_model].copy()
+            if family != "Tất cả":
+                filtered = filtered[filtered["scenario_type"] == family]
+            if repeat != "Tất cả":
+                filtered = filtered[filtered["repeat"] == repeat]
+            filtered["scenario_type"] = filtered["scenario_type"].map(scenario_name)
+            filtered["actual_label"] = filtered["actual_label"].map(label_name)
+            filtered["predicted_label"] = filtered["predicted_label"].map(label_name)
+            filtered = translated_columns(filtered, {
+                "repeat": "Lượt", "scenario_id": "ID mẫu", "scenario_type": "Kịch bản",
+                "subject_emp_no": "ID nhân viên mẫu", "actual_label": "Nhãn thực tế",
+                "static_honeytoken_hit": "Token hit (0/1)", "result_count": "Số dòng trả về (dòng)",
+                "hour": "Giờ (0–23)", "target_table_count": "Số bảng (bảng)",
+                "query_frequency": "Tần suất trong phiên (truy vấn)", "query_duration_ms": "Thời lượng (ms)",
+                "is_department_query": "Truy vấn phòng ban (0/1)", "model": "Phương pháp",
+                "predicted_label": "Dự đoán (0/1)", "risk_score": "Điểm rủi ro (0–1)",
+                "latency_ms": "Độ trễ chấm điểm (ms/truy vấn)",
+            })
+            st.dataframe(filtered, use_container_width=True, hide_index=True)
+            st.download_button("Tải log mẫu đang lọc (CSV)", filtered.to_csv(index=False).encode("utf-8-sig"),
+                               file_name="log_benchmark_tong_hop.csv", mime="text/csv", key="dl_synth")
     else:
-        st.info("No gateway events recorded yet.")
-    st.subheader("Placement update history")
-    history = ROOT / "results" / "placement_history.csv"
-    if history.exists():
-        df = pd.read_csv(history)
-        st.metric("Recorded moves", len(df))
-        st.dataframe(df.tail(100), use_container_width=True)
-    else:
-        st.info("No applied placement updates yet. Run adaptive/placement.py --dry-run to review a recommendation.")
+        st.info("Chưa có benchmark. Từ thư mục DemoB chạy: `python evaluation\\run_common_scenarios.py`.")
+
+with tab_ops:
+    st.header("Giám sát và công cụ Demo B")
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Thử chấm điểm rủi ro")
+        count = st.slider("Số dòng trả về (dòng)", 1, 500, 25)
+        hour = st.slider("Giờ truy cập tại máy (0–23)", 0, 23, 14)
+        tables = st.slider("Số bảng được truy cập (bảng)", 1, 5, 2)
+        freq = st.slider("Số truy vấn tính đến hiện tại trong phiên (truy vấn)", 1, 300, 20)
+        duration = st.slider("Thời lượng truy vấn (ms)", 1, 1000, 80)
+        dept_query = st.checkbox("Truy vấn bảng phòng ban")
+        features = {"result_count": count, "hour": hour, "target_table_count": tables,
+                    "query_frequency": freq, "query_duration_ms": duration,
+                    "is_department_query": int(dept_query)}
+        result = score_behavior(features)
+        label_vi = "Rủi ro cao" if result["label"] == "HIGH" else "Bình thường"
+        st.metric("Điểm rủi ro của mô hình (%)", f"{result['score']:.1%}", label_vi)
+        st.caption("Điểm rủi ro là đầu ra của bộ phân loại; không phải xác suất tấn công đã được hiệu chuẩn/xác nhận ngoài thực tế.")
+        model_metadata_path = ROOT / "models" / "live_sim_model_metadata.json"
+        if model_metadata_path.exists():
+            model_metadata = json.loads(model_metadata_path.read_text(encoding="utf-8"))
+            st.caption(
+                f"Mô hình: {model_metadata.get('model', 'unknown')} · "
+                f"{model_metadata.get('rows', 0)} truy vấn huấn luyện/kiểm thử (dòng) · "
+                f"{model_metadata.get('sessions', 0)} phiên · "
+                f"ngưỡng {model_metadata.get('threshold', 0.65):.4f} (điểm từ 0 đến 1) · "
+                f"FPR hiệu chỉnh {model_metadata.get('calibration_session_metrics', {}).get('false_positive_rate', 0):.1%}"
+            )
+        else:
+            st.info("Chưa tìm thấy metadata mô hình huấn luyện live. Chạy capture và train theo README Demo B.")
+
+    with right:
+        st.subheader("Dự đoán gần đây qua gateway")
+        recent = latest_events(50)
+        if recent:
+            recent_frame = pd.DataFrame(recent)
+            recent_frame = translated_columns(recent_frame, {
+                "event_id": "ID sự kiện", "username": "Tài khoản", "query_type": "Loại truy vấn",
+                "event_time_utc": "Thời điểm (UTC)", "result_count": "Số dòng trả về (dòng)",
+                "hour": "Giờ tại máy (0–23)", "target_table_count": "Số bảng đích (bảng)",
+                "query_frequency": "Số thứ tự truy vấn trong cửa sổ (truy vấn)",
+                "query_duration_ms": "Thời lượng (ms)", "is_department_query": "Truy vấn phòng ban (0/1)",
+                "department_no": "Mã phòng ban",
+                "honeytoken_hit": "Token hit (0/1)", "risk_score": "Điểm rủi ro (0–1)",
+            "predicted_label": "Phân loại mô hình",
+            })
+            st.dataframe(recent_frame, use_container_width=True, hide_index=True)
+        else:
+            st.info("Chưa có sự kiện gateway được ghi nhận.")
+
+        st.subheader("Lịch sử thay đổi vị trí token")
+        history = ROOT / "results" / "placement_history.csv"
+        if history.exists():
+            placement = pd.read_csv(history)
+            st.metric("Số lần thay đổi được ghi nhận (lần)", len(placement))
+            placement = translated_columns(placement, {
+                "timestamp_utc": "Thời điểm (UTC)", "emp_no": "ID nhân viên mồi",
+                "from_department": "Phòng ban cũ", "to_department": "Phòng ban mới",
+                "update_cost_ms": "Chi phí cập nhật (ms)",
+            })
+            st.dataframe(placement.tail(100), use_container_width=True)
+        else:
+            st.info("Chưa có thay đổi vị trí token được áp dụng. Có thể xem đề xuất bằng `python adaptive\\placement.py --dry-run`.")
