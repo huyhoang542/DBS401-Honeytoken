@@ -18,6 +18,22 @@ if SECURITY_DB != "honeytoken_security_b" or DATASET_DB not in {"employee", "emp
 HISTORY = ROOT / "results" / "placement_history.csv"
 
 
+def allocate_token_budget(departments, risk_by_department, budget):
+    """Allocate a fixed honeytoken budget in proportion to RF risk scores."""
+    if budget < 0 or not departments:
+        raise ValueError("A non-negative budget and at least one department are required")
+    weights = {dept: max(0.0, float(risk_by_department.get(dept, 0.0))) + 0.01
+               for dept in departments}
+    total_weight = sum(weights.values())
+    quotas = {dept: budget * weights[dept] / total_weight for dept in departments}
+    targets = {dept: int(quotas[dept]) for dept in departments}
+    remaining = budget - sum(targets.values())
+    ranked = sorted(departments, key=lambda dept: (-(quotas[dept] - targets[dept]), dept))
+    for dept in ranked[:remaining]:
+        targets[dept] += 1
+    return targets
+
+
 def connection():
     user = os.getenv("PLACEMENT_USER") or os.getenv("DB_USER") or os.getenv("MONITOR_USER")
     password = os.getenv("PLACEMENT_PASSWORD") or os.getenv("DB_PASSWORD") or os.getenv("MONITOR_PASSWORD")
@@ -56,14 +72,8 @@ def main():
         risk_by_department = {dept: float(score) for dept, score in risk_rows if dept in departments}
         if not risk_by_department:
             raise RuntimeError("No department risk scores found. Run Demo B department queries first.")
-        # Allocate the existing fixed token budget in proportion to observed model risk.
-        weights = {dept: risk_by_department.get(dept, 0.0) + .01 for dept in departments}
         budget = len(tokens)
-        quotas = {dept: budget * weights[dept] / sum(weights.values()) for dept in departments}
-        target_counts = {dept: int(quotas[dept]) for dept in departments}
-        remainders = budget - sum(target_counts.values())
-        for dept in sorted(departments, key=lambda item: (-(quotas[item] - target_counts[item]), item))[:remainders]:
-            target_counts[dept] += 1
+        target_counts = allocate_token_budget(departments, risk_by_department, budget)
         token_counts = {dept: 0 for dept in departments}
         for token in tokens:
             if token["dept_no"] in token_counts:

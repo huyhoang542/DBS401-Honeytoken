@@ -8,8 +8,6 @@ import streamlit as st
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from ml.risk_model import score_behavior  # noqa: E402
-from monitoring.behavior_store import latest_events  # noqa: E402
 
 st.set_page_config(page_title="Honeytoken thích nghi — Demo B", layout="wide")
 st.title("Honeytoken thích nghi — Demo B")
@@ -27,14 +25,15 @@ SCENARIO_VI = {
     "broad_employee_collection": "Thu thập rộng dữ liệu nhân viên",
     "low_and_slow_targeting": "Dò tìm chậm (low-and-slow)",
     "token_probe_validation": "Kiểm tra token canary",
+    "target_department": "Mục tiêu phòng ban",
     "afterhours_bulk_access": "Truy cập hàng loạt ngoài giờ",
     "offhours_maintenance": "Bảo trì ngoài giờ",
 }
 DETECTOR_VI = {
-    "static": "A — token tĩnh",
+    "static": "A — cảnh báo theo token-hit",
     "ml": "B — Random Forest",
     "ml_or_token": "B — Random Forest kết hợp token",
-    "A_static_honeytoken": "A — mốc đối chứng token tĩnh",
+    "A_static_honeytoken": "A — HMA, cảnh báo token-hit",
     "B_random_forest": "B — Random Forest",
     "B_random_forest_plus_honeytoken": "B — Random Forest kết hợp token",
 }
@@ -55,6 +54,16 @@ METRIC_VI = {
 
 
 def scenario_name(value):
+    if isinstance(value, str) and value.startswith("target_department_"):
+        parts = value.split("_")
+        dept = parts[2] if len(parts) > 2 else "không rõ"
+        if value.endswith("_sample_25"):
+            return f"Phòng ban {dept}: lấy mẫu có thứ tự giả ngẫu nhiên, 25 dòng"
+        if value.endswith("_early_hire_25"):
+            return f"Phòng ban {dept}: 25 nhân viên có ngày tuyển dụng sớm nhất"
+        if value.endswith("_latest_250"):
+            return f"Phòng ban {dept}: 250 ID cao nhất (chẩn đoán bão hòa)"
+        return "Mục tiêu cụ thể: phòng ban " + value.removeprefix("target_department_")
     return SCENARIO_VI.get(value, value)
 
 
@@ -104,15 +113,76 @@ def load_csv(path):
     return pd.read_csv(path) if path.exists() else pd.DataFrame()
 
 
-tab_live, tab_synth, tab_ops = st.tabs([
-    "1. So sánh MySQL lab",
-    "2. Benchmark tổng hợp",
-    "3. Vận hành Demo B",
+tab_placement, tab_live, tab_synth = st.tabs([
+    "1. Hiệu quả vị trí honeytoken",
+    "2. Cảnh báo và phát hiện hành vi ML",
+    "3. Benchmark tổng hợp",
 ])
 
+with tab_placement:
+    st.header("So sánh vị trí sinh/đặt honeytoken")
+    st.write("Demo A là mốc HMA/SDV theo bài báo: HMA sinh nội dung và quan hệ, vị trí phòng ban giữ theo dữ liệu quan hệ HMA sinh ra. Demo B giữ nguyên nội dung, dùng Random Forest phân bổ vị trí theo rủi ro phòng ban. Kịch bản placement chính lấy mẫu có seed tối đa 25 dòng và đọc 25 nhân viên có ngày tuyển dụng sớm nhất tại từng phòng ban; truy vấn 250 ID cao nhất chỉ là chẩn đoán bão hòa. Cảnh báo ML được đánh giá riêng ở tab 2.")
+    placement = ROOT / "results" / "live_attack_metrics.json"
+    placement_sessions_path = ROOT / "results" / "live_attack_placement_session_results.csv"
+    placement_scenarios_path = ROOT / "results" / "live_attack_placement_scenario_metrics.csv"
+    if placement.exists() and placement_sessions_path.exists() and placement_scenarios_path.exists():
+        data = json.loads(placement.read_text(encoding="utf-8"))
+        experiment = data.get("placement_evaluation", {})
+        summary = experiment.get("session_level_metrics", {})
+        families_present = set(data.get("scenario_families", []))
+        has_updated_protocol = (
+            any(name.endswith("_sample_25") for name in families_present)
+            and any(name.endswith("_early_hire_25") for name in families_present)
+            and int(data.get("repeats", 0)) >= 5
+        )
+        if not has_updated_protocol:
+            st.warning("Các số liệu đang hiển thị được tạo theo giao thức cũ (truy vấn 250 ID cao nhất), có thể bị bão hòa. Chưa có kết quả của bộ kịch bản mới; hãy chạy capture/train thủ công theo README trước khi kết luận.")
+        if summary:
+            rows = []
+            for demo, label in (("Demo A", "A — SDV/HMA (vị trí HMA)"), ("Demo B", "B — SDV/HMA + Random Forest (vị trí theo rủi ro)")):
+                metric = summary.get(demo, {})
+                rows.append({
+                    "Phương pháp": label,
+                    "Phiên tấn công (phiên)": metric.get("attack_sessions", 0),
+                    "Phiên có token hit (phiên)": metric.get("token_hit_sessions", 0),
+                    "Tỷ lệ phiên có hit (%)": metric.get("session_hit_rate", 0),
+                    "Truy vấn tấn công (truy vấn)": metric.get("attack_queries", 0),
+                    "Truy vấn trả token (truy vấn)": metric.get("token_hit_queries", 0),
+                    "Tỷ lệ truy vấn có hit (%)": metric.get("query_hit_rate", 0),
+                    "Số dòng token trả về (lượt)": metric.get("token_rows_returned", 0),
+                })
+            st.dataframe(pd.DataFrame(rows).style.format({"Tỷ lệ phiên có hit (%)": "{:.1%}", "Tỷ lệ truy vấn có hit (%)": "{:.1%}"}), use_container_width=True, hide_index=True)
+            st.caption("Đơn vị: phiên, truy vấn, lượt xuất hiện token và tỷ lệ %. Tổng chính loại truy vấn 250 ID cao nhất vì dễ làm bão hòa hit; kịch bản này vẫn được liệt kê riêng để chẩn đoán.")
+            st.info("Để kết luận có ý nghĩa, cần cùng database, cùng số lượng token, cùng kịch bản/lượt chạy, và token A/B phải được nạp từ candidate mới. Đây là kết quả lab mô phỏng.")
+        else:
+            st.warning("Các file hiện có được tạo trước khi có phép đo riêng cho vị trí token. Chạy lại capture và huấn luyện sau khi nạp candidates A/B mới.")
+        scenarios = load_csv(placement_scenarios_path)
+        if not scenarios.empty:
+            core = scenarios[scenarios["scenario_type"] != "token_probe_validation"].copy()
+            core["Kịch bản"] = core["scenario_type"].map(scenario_name)
+            core["Phương pháp"] = core["demo"].map({"Demo A": "A — SDV/HMA", "Demo B": "B — RF chọn vị trí"})
+            core["Phiên (phiên)"] = core["sessions"]
+            core["Phiên có hit (phiên)"] = core["token_hit_sessions"]
+            core["Tỷ lệ phiên có hit (%)"] = core["session_hit_rate"]
+            core["Truy vấn trả token (truy vấn)"] = core["token_hit_queries"]
+            core["Truy vấn (truy vấn)"] = core["query_count"]
+            core["Số dòng token trả về (lượt)"] = core.get("token_rows_returned", 0)
+            st.subheader("Kết quả theo từng mục tiêu và cách truy vấn")
+            st.dataframe(core[["Kịch bản", "Phương pháp", "Phiên (phiên)", "Phiên có hit (phiên)", "Tỷ lệ phiên có hit (%)", "Truy vấn trả token (truy vấn)", "Truy vấn (truy vấn)", "Số dòng token trả về (lượt)"]].style.format({"Tỷ lệ phiên có hit (%)": "{:.1%}"}), use_container_width=True, hide_index=True)
+        session_logs = load_csv(placement_sessions_path)
+        if not session_logs.empty:
+            st.subheader("Log kết quả từng kịch bản/lượt")
+            if "token_rows_returned" not in session_logs.columns:
+                session_logs["token_rows_returned"] = 0
+            session_logs["Kịch bản"] = session_logs["scenario_type"].map(scenario_name)
+            session_logs = session_logs.rename(columns={"demo": "Demo", "session_id": "ID phiên", "actual_label": "Nhãn (0=bình thường, 1=đáng ngờ)", "query_count": "Truy vấn (truy vấn)", "token_hit_queries": "Truy vấn có token hit (truy vấn)", "token_rows_returned": "Số dòng token trả về (lượt)", "token_hit_session": "Phiên có hit (0/1)", "query_hit_rate": "Tỷ lệ truy vấn có hit (%)", "is_core_attack": "Thuộc tổng tấn công chính (0/1)"})
+            st.dataframe(session_logs[["Demo", "ID phiên", "Kịch bản", "Nhãn (0=bình thường, 1=đáng ngờ)", "Truy vấn (truy vấn)", "Truy vấn có token hit (truy vấn)", "Số dòng token trả về (lượt)", "Phiên có hit (0/1)", "Tỷ lệ truy vấn có hit (%)", "Thuộc tổng tấn công chính (0/1)"]], use_container_width=True, hide_index=True)
+    else:
+        st.info("Chưa có log đo token hit riêng. Nạp candidates A/B theo README Demo A/B, sau đó chạy lại capture và train để tạo kết quả vị trí.")
+
 with tab_live:
-    st.header("So sánh trên truy vấn MySQL lab")
-    st.write("Đây là dữ liệu thu từ các câu SELECT chạy trên cơ sở dữ liệu mẫu cục bộ. So sánh chính: Demo A tĩnh với Demo B Random Forest, ở mức phiên kiểm thử.")
+    st.header("Cảnh báo và phát hiện hành vi bằng Random Forest")
+    st.write("Các chỉ số ở tab này đánh giá khả năng phân loại hành vi. Chúng không đo hiệu quả vị trí honeytoken; xem tab 1 để so sánh token hit.")
     live_metrics_path = ROOT / "results" / "live_attack_metrics.json"
     live_sessions_path = ROOT / "results" / "live_attack_session_results.csv"
     live_scenarios_path = ROOT / "results" / "live_attack_scenario_metrics.csv"
@@ -145,7 +215,7 @@ with tab_live:
             st.subheader("Kết quả theo từng kịch bản")
             st.dataframe(table.style.format({column: "{:.1%}" for column in table.columns if column.startswith("A —") or column.startswith("B —")}),
                          use_container_width=True, hide_index=True)
-            st.caption("Với kịch bản bình thường, tỷ lệ cảnh báo là tỷ lệ báo động giả. Với kịch bản đáng ngờ, đó là tỷ lệ phát hiện. Mỗi kịch bản có 5 phiên.")
+            st.caption("Với kịch bản bình thường, tỷ lệ cảnh báo là tỷ lệ báo động giả; với kịch bản đáng ngờ, đó là tỷ lệ phát hiện. Số phiên mỗi kịch bản được ghi ngay trong bảng.")
 
         with st.expander("Thử nghiệm phụ: B kết hợp Random Forest với token hit"):
             if summary.get("Demo B Random Forest OR token hit"):
@@ -318,67 +388,3 @@ with tab_synth:
                                file_name="log_benchmark_tong_hop.csv", mime="text/csv", key="dl_synth")
     else:
         st.info("Chưa có benchmark. Từ thư mục DemoB chạy: `python evaluation\\run_common_scenarios.py`.")
-
-with tab_ops:
-    st.header("Giám sát và công cụ Demo B")
-    left, right = st.columns(2)
-    with left:
-        st.subheader("Thử chấm điểm rủi ro")
-        count = st.slider("Số dòng trả về (dòng)", 1, 500, 25)
-        hour = st.slider("Giờ truy cập tại máy (0–23)", 0, 23, 14)
-        tables = st.slider("Số bảng được truy cập (bảng)", 1, 5, 2)
-        freq = st.slider("Số truy vấn tính đến hiện tại trong phiên (truy vấn)", 1, 300, 20)
-        duration = st.slider("Thời lượng truy vấn (ms)", 1, 1000, 80)
-        dept_query = st.checkbox("Truy vấn bảng phòng ban")
-        features = {"result_count": count, "hour": hour, "target_table_count": tables,
-                    "query_frequency": freq, "query_duration_ms": duration,
-                    "is_department_query": int(dept_query)}
-        result = score_behavior(features)
-        label_vi = "Rủi ro cao" if result["label"] == "HIGH" else "Bình thường"
-        st.metric("Điểm rủi ro của mô hình (%)", f"{result['score']:.1%}", label_vi)
-        st.caption("Điểm rủi ro là đầu ra của bộ phân loại; không phải xác suất tấn công đã được hiệu chuẩn/xác nhận ngoài thực tế.")
-        model_metadata_path = ROOT / "models" / "live_sim_model_metadata.json"
-        if model_metadata_path.exists():
-            model_metadata = json.loads(model_metadata_path.read_text(encoding="utf-8"))
-            st.caption(
-                f"Mô hình: {model_metadata.get('model', 'unknown')} · "
-                f"{model_metadata.get('rows', 0)} truy vấn huấn luyện/kiểm thử (dòng) · "
-                f"{model_metadata.get('sessions', 0)} phiên · "
-                f"ngưỡng {model_metadata.get('threshold', 0.65):.4f} (điểm từ 0 đến 1) · "
-                f"FPR hiệu chỉnh {model_metadata.get('calibration_session_metrics', {}).get('false_positive_rate', 0):.1%}"
-            )
-        else:
-            st.info("Chưa tìm thấy metadata mô hình huấn luyện live. Chạy capture và train theo README Demo B.")
-
-    with right:
-        st.subheader("Dự đoán gần đây qua gateway")
-        recent = latest_events(50)
-        if recent:
-            recent_frame = pd.DataFrame(recent)
-            recent_frame = translated_columns(recent_frame, {
-                "event_id": "ID sự kiện", "username": "Tài khoản", "query_type": "Loại truy vấn",
-                "event_time_utc": "Thời điểm (UTC)", "result_count": "Số dòng trả về (dòng)",
-                "hour": "Giờ tại máy (0–23)", "target_table_count": "Số bảng đích (bảng)",
-                "query_frequency": "Số thứ tự truy vấn trong cửa sổ (truy vấn)",
-                "query_duration_ms": "Thời lượng (ms)", "is_department_query": "Truy vấn phòng ban (0/1)",
-                "department_no": "Mã phòng ban",
-                "honeytoken_hit": "Token hit (0/1)", "risk_score": "Điểm rủi ro (0–1)",
-            "predicted_label": "Phân loại mô hình",
-            })
-            st.dataframe(recent_frame, use_container_width=True, hide_index=True)
-        else:
-            st.info("Chưa có sự kiện gateway được ghi nhận.")
-
-        st.subheader("Lịch sử thay đổi vị trí token")
-        history = ROOT / "results" / "placement_history.csv"
-        if history.exists():
-            placement = pd.read_csv(history)
-            st.metric("Số lần thay đổi được ghi nhận (lần)", len(placement))
-            placement = translated_columns(placement, {
-                "timestamp_utc": "Thời điểm (UTC)", "emp_no": "ID nhân viên mồi",
-                "from_department": "Phòng ban cũ", "to_department": "Phòng ban mới",
-                "update_cost_ms": "Chi phí cập nhật (ms)",
-            })
-            st.dataframe(placement.tail(100), use_container_width=True)
-        else:
-            st.info("Chưa có thay đổi vị trí token được áp dụng. Có thể xem đề xuất bằng `python adaptive\\placement.py --dry-run`.")

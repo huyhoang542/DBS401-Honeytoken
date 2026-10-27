@@ -6,8 +6,8 @@
 
 - Database nghiệp vụ dùng chung: employee.
 - Registry, log và cảnh báo Demo B: honeytoken_security_b.
-- Dải ID token Demo B: 910001–910050.
-- Dải HMA Demo A: 910051–910100.
+- Dải ID token Demo B: 910001–910050 (nội dung lấy từ HMA, vị trí theo Random Forest).
+- Dải HMA Demo A: 910051–910100 (nội dung và vị trí lấy từ HMA).
 - Dataset mục tiêu là bộ Bytebase Employee Sample Database, bản dataset_large có 10.000 nhân viên. Đây là dữ liệu mẫu; bản thân nó không chứa lịch sử truy vấn hay nhãn tấn công.
 
 Demo B có gateway truy vấn, bộ thu telemetry, Random Forest, dashboard Streamlit và mô-đun thử nghiệm adaptive placement. Cài thư viện:
@@ -22,33 +22,105 @@ Copy-Item .env.example .env
 
 Điền thông tin kết nối vào .env. Với so sánh A/B, cả hai demo phải dùng DB_NAME=employee. Không chép mật khẩu vào README hoặc Git.
 
-## 2. Chuẩn bị schema và token
+## 2. Xóa token cũ và chạy lại từ đầu
 
-Nếu schema bảo mật chưa có, chạy bằng MySQL administrator từ thư mục DemoB:
+> Chỉ chạy trên MySQL lab cục bộ dùng chung `employee`. Với `--apply`, reset xóa token và dòng con trong các dải `900001–900050`, `910001–910050`, `910051–910100`, registry, toàn bộ log truy cập/cảnh báo của hai demo và các file kết quả/mô hình mà dashboard đọc. Nó giữ nhân viên thường, schema và file sao lưu `live_attack_query_results.before-reset.csv`.
 
-~~~powershell
-Get-Content -Raw .\database\setup_security_schema.sql | mysql -u root -p
-Get-Content -Raw .\database\comparison_schema.sql | mysql -u root -p
-~~~
-
-Tạo các tài khoản theo database/create_demo_b_users.sql.example hoặc cấp các quyền tương đương. Đảm bảo tài khoản reader chỉ đọc employee và monitor chỉ truy cập registry/log được cấp.
-
-Seeder Demo B dùng Faker, không dùng ML để tạo token. Chỉ chạy khi dải 910001–910050 chưa tồn tại:
+### Bước 1 — xem trước phạm vi xóa
 
 ~~~powershell
-python database\seed_honeytokens.py
+Set-Location D:\FPTU\Course\DBS401_Project\DemoB
+.\.venv\Scripts\Activate.ps1
+python database\reset_lab_honeytokens.py
 ~~~
 
-Seeder thêm các bản ghi nhân viên mồi và đăng ký chúng trong honeytoken_security_b. Không chạy lại nếu đã có 50 token. Demo A sinh token bằng SDV HMA; xem [README Demo A](../DemoA/README.md).
+Nhập thông tin MySQL administrator khi được hỏi. Lệnh mặc định chỉ in số hàng sẽ bị xóa. Xác nhận host là `localhost`, port đúng và database là `employee`.
 
-Có thể reset hai demo trong môi trường lab bằng script có dry-run mặc định. Chỉ dùng --apply khi chủ động muốn xóa các dải token quy định và log giám sát:
+### Bước 2 — xóa token cũ
 
 ~~~powershell
-.\.venv\Scripts\python.exe database\reset_lab_honeytokens.py
-.\.venv\Scripts\python.exe database\reset_lab_honeytokens.py --apply
+python database\reset_lab_honeytokens.py --apply
 ~~~
 
-Lệnh hỏi thông tin MySQL administrator. Script giữ schema và các bản ghi nhân viên thông thường.
+Chạy sau khi dry-run hiển thị đúng phạm vi. Script hỏi lại thông tin administrator và xóa trong transaction. Không chạy lại nếu không chủ động muốn xóa các dải này.
+
+### Bước 3 — sinh và nạp Demo A bằng HMA
+
+~~~powershell
+Set-Location D:\FPTU\Course\DBS401_Project\DemoA
+.\.venv\Scripts\Activate.ps1
+~~~
+
+Nếu đã có `database\hma_artifacts\employee_hma.pkl`, dùng model đã fit; nếu chưa có, bỏ `--reuse-model` (lần fit đầu có thể lâu):
+
+~~~powershell
+python database\generate_hma_honeytokens.py --reuse-model
+python database\apply_hma_honeytokens.py
+python database\apply_hma_honeytokens.py --apply --admin
+~~~
+
+Lệnh thứ hai là dry-run. Kiểm tra dòng ứng viên và dải ID trước lệnh thứ ba. HMA sinh nội dung liên quan nhiều bảng; mỗi token có đúng một phòng ban hiện hành theo vị trí HMA.
+
+### Bước 4 — bootstrap Random Forest cho Demo B
+
+Capture khởi tạo dùng huấn luyện RF khi B chưa có token; **không dùng kết quả này so sánh vị trí**. Capture sẽ ghi đè CSV kết quả truy vấn. Sao lưu file hiện có trước nếu cần giữ lại:
+
+~~~powershell
+Set-Location D:\FPTU\Course\DBS401_Project\DemoB
+.\.venv\Scripts\Activate.ps1
+if (Test-Path .\results\live_attack_query_results.csv) { Copy-Item .\results\live_attack_query_results.csv .\results\live_attack_query_results.before-reset.csv }
+python evaluation\run_live_attack_simulation.py --capture-only --bootstrap-rf
+python evaluation\train_live_model.py
+~~~
+
+Đặc trưng model được đo từ truy vấn MySQL; nhãn bình thường/tấn công do kịch bản đặt, không phải nhãn sự cố thực tế.
+
+### Bước 5 — ghi điểm rủi ro theo phòng ban
+
+Chạy từng truy vấn qua gateway để RF chấm điểm và lưu risk score theo phòng ban:
+
+~~~powershell
+python monitoring\query_gateway.py --department d001 --limit 100
+python monitoring\query_gateway.py --department d002 --limit 100
+python monitoring\query_gateway.py --department d003 --limit 100
+python monitoring\query_gateway.py --department d004 --limit 100
+python monitoring\query_gateway.py --department d005 --limit 100
+python monitoring\query_gateway.py --department d006 --limit 100
+python monitoring\query_gateway.py --department d007 --limit 100
+python monitoring\query_gateway.py --department d008 --limit 100
+python monitoring\query_gateway.py --department d009 --limit 100
+~~~
+
+### Bước 6 — tạo và nạp Demo B
+
+~~~powershell
+python database\generate_rf_honeytokens.py
+python database\apply_rf_honeytokens.py
+python database\apply_rf_honeytokens.py --apply --admin
+~~~
+
+Generator chỉ ghi candidate CSV vào `database\rf_artifacts`; không ghi MySQL. Lệnh apply đầu là dry-run. Chỉ chạy lệnh cuối sau khi xác nhận dải `910001–910050` còn trống. Demo B dùng cùng nội dung HMA như A, còn vị trí phòng ban được phân bổ theo điểm rủi ro RF.
+
+### Bước 7 — chạy cùng mục tiêu attacker trên A và B
+
+Capture/train cuối sẽ ghi đè file kết quả trước; sao lưu trước nếu cần. Mặc định mục tiêu là tất cả phòng ban; mọi phòng ban và cách truy vấn đều chạy giống nhau trên A/B:
+
+~~~powershell
+if (Test-Path .\results\live_attack_query_results.csv) { Copy-Item .\results\live_attack_query_results.csv .\results\live_attack_query_results.before-placement.csv }
+python evaluation\run_live_attack_simulation.py --capture-only --repeats 20
+python evaluation\train_live_model.py
+python evaluation\run_common_scenarios.py
+~~~
+
+Mặc định chạy mọi phòng ban trong 20 lần lặp theo cặp. Mỗi phòng ban có truy vấn lấy mẫu seeded tối đa 25 dòng và truy vấn 25 nhân viên có ngày tuyển dụng sớm nhất; đây là chỉ số placement chính. Query 250 ID cao nhất chỉ là chẩn đoán bão hòa. Khi truyền `--target-departments`, dùng cùng danh sách cho cả A/B. Lệnh benchmark tạo bộ dữ liệu tổng hợp riêng cho tab 3; nó không đọc MySQL và không trộn với kết quả live.
+
+### Bước 8 — mở dashboard và đọc kết quả
+
+~~~powershell
+python -m streamlit run dashboard\app.py
+~~~
+
+Dashboard có ba tab: **Hiệu quả vị trí honeytoken** đo token thực sự được trả về theo phòng ban/cách truy vấn; **Cảnh báo và phát hiện hành vi ML** so sánh quy tắc token-hit A với RF B theo phiên và từng kịch bản; **Benchmark tổng hợp** trình bày riêng các mẫu NumPy giả lập. Kết quả placement nằm trong `results\live_attack_placement_session_results.csv`, `results\live_attack_placement_scenario_metrics.csv` và `placement_evaluation` trong `results\live_attack_metrics.json`. Tab vận hành đã bỏ. Sau reset các artifacts này bị xóa và dashboard để trống cho đến khi bạn chạy lại capture/train hoặc benchmark.
 
 ## 3. Cổng truy vấn và bố trí thích nghi
 
@@ -79,24 +151,24 @@ python evaluation\train_live_model.py
 python -m streamlit run dashboard\app.py
 ~~~
 
-Capture chạy các truy vấn SELECT có giới hạn trên MySQL cục bộ, 5 lần lặp của 8 kịch bản cho mỗi demo. Nó thu 40 session và 980 truy vấn cho mỗi demo. Không ghi thay đổi vào employee.
+Capture placement dùng các truy vấn SELECT có giới hạn trên MySQL cục bộ. Mặc định kiểm tra tất cả phòng ban và chạy 20 lần lặp theo cặp; có thể giới hạn `--target-departments d001,d002` và đặt `--repeats 20`. Mỗi phòng ban có ba mục tiêu truy vấn giống hệt trên A/B: lấy 250 ID cao nhất (chẩn đoán bão hòa), lấy mẫu có thứ tự giả ngẫu nhiên tối đa 25 dòng và lấy 25 nhân viên có ngày tuyển dụng sớm nhất. Hai phép sau là chỉ số placement chính; truy vấn ID cao nhất được báo riêng vì ID token cao có thể khiến mọi truy vấn hit. Capture chỉ đọc MySQL.
 
-Model live Demo B được huấn luyện trên 980 dòng telemetry đo được từ lần chạy đó, với các đặc trưng: số dòng trả về, giờ truy vấn, số bảng đích, tần suất truy vấn trong session, thời lượng và cờ truy vấn phòng ban. Mô hình là Random Forest. Kịch bản gán nhãn bình thường/tấn công mô phỏng; đây không phải nhãn từ sự cố thực tế. Ngưỡng hiện lưu ở models/live_sim_model_metadata.json.
+Model live Demo B dùng các đặc trưng đo được: số dòng trả về, giờ truy vấn, số bảng đích, tần suất truy vấn trong session, thời lượng và cờ truy vấn phòng ban. Mô hình là Random Forest. Kịch bản gán nhãn bình thường/tấn công mô phỏng; đây không phải nhãn từ sự cố thực tế. Ngưỡng hiện lưu ở models/live_sim_model_metadata.json. Điểm RF theo phòng ban còn được dùng để chọn vị trí token B.
 
-Tám kịch bản gồm: tra cứu từng ID thông thường, báo cáo hàng loạt hợp lệ, truy vấn bảo trì, dò ID nhanh, quét phòng ban, thu thập nhiều bản ghi, truy vấn chậm có chủ đích và kiểm tra token mồi. Kịch bản kiểm tra token chủ động biết ID canary để xác nhận detector, không giả định attacker ngoài đời biết trước ID đó.
+Các kịch bản gồm: tra cứu từng ID thông thường, báo cáo hàng loạt hợp lệ, truy vấn bảo trì, dò ID nhanh, quét phòng ban, thu thập nhiều bản ghi, truy vấn chậm có chủ đích, cùng từng tổ hợp phòng ban × mục tiêu (ID mới nhất, mẫu giả ngẫu nhiên, ngày tuyển dụng sớm). Kịch bản kiểm tra token chủ động biết ID canary để xác nhận detector; nó được báo riêng và không dùng làm bằng chứng hiệu quả placement.
 
 ## 5. Các nguồn dữ liệu ML cần phân biệt
 
 1. **Benchmark tổng hợp:** evaluation/run_common_scenarios.py tạo đặc trưng và nhãn bằng NumPy với seed cố định. Mô hình Random Forest benchmark có 4.000 dòng tổng hợp. Employee dataset chỉ cung cấp ID tham chiếu; không cung cấp query logs hoặc nhãn tấn công.
 2. **Telemetry MySQL lab:** run_live_attack_simulation.py chạy các truy vấn SELECT trên database employee cục bộ và đo số dòng, thời lượng, giờ, mẫu bảng và tần suất. Nhãn do kịch bản đặt. Model live học trên đặc trưng quan sát được, nhưng không học từ sự cố tấn công thật.
-3. **Honeytoken của Demo B:** seeder dùng Faker để tạo bản ghi mồi. Đây là dữ liệu decoy tổng hợp, không phải dữ liệu huấn luyện hành vi.
-4. **Demo A HMA:** SDV HMASynthesizer học phân bố và quan hệ giữa các bảng để sinh bản ghi mồi liên kết. Đây cũng là dữ liệu tổng hợp.
+3. **Nội dung honeytoken A/B:** SDV HMASynthesizer học phân bố và quan hệ giữa các bảng employee, dept_emp, dept_manager, salary, title để sinh dữ liệu mồi tổng hợp. Demo B tái sử dụng cùng candidate HMA.
+4. **Vị trí Demo B:** Random Forest không sinh nội dung các cột; nó chấm điểm telemetry truy vấn theo phòng ban. Điểm trung bình rủi ro được dùng để phân bổ ngân sách token B.
 
 ## 6. Kết quả đã demo
 
 ### Benchmark hành vi tổng hợp
 
-Kết quả trong results/ab_metrics.csv dùng 5 lần chia train/test trên các kịch bản tạo bằng code. Một số kết quả tổng hợp:
+Kết quả cũ trong results/ab_metrics.csv dùng 5 lần chia train/test trên các kịch bản tạo bằng code. Đây là benchmark phân loại hành vi, không đo vị trí HMA so với RF. Một số kết quả tổng hợp:
 
 | Phương pháp | Accuracy | Precision | Recall | F1 | FPR |
 |---|---:|---:|---:|---:|---:|
@@ -108,7 +180,7 @@ Kết quả trong results/ab_metrics.csv dùng 5 lần chia train/test trên cá
 
 ### Capture MySQL có kiểm soát
 
-Kết quả đã lưu trong results/live_attack_metrics.json: 40 session mỗi demo; 25 session được kịch bản gán nhãn tấn công mô phỏng và 15 session bình thường.
+Kết quả cũ đã lưu trong results/live_attack_metrics.json thuộc phép đo phân loại trước khi có kịch bản placement theo mục tiêu: 40 session mỗi demo; 25 session gán nhãn tấn công mô phỏng và 15 session bình thường.
 
 | Phương pháp | TP | TN | FP | FN | Accuracy | Recall | F1 | FPR |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -118,7 +190,7 @@ Kết quả đã lưu trong results/live_attack_metrics.json: 40 session mỗi d
 
 Ngưỡng hiện tại là 0,9865. Trong lần chạy này, Demo B không báo động nhầm trong 15 session bình thường. Không diễn giải tỷ lệ 0% này thành bảo đảm trong thực tế: bộ đo nhỏ, gồm 8 mẫu kịch bản cố định lặp lại 5 lần; nhãn do script gán. Việc kiểm định giữ lại một lần lặp để đánh giá nhưng các nhóm kịch bản vẫn được biết trước.
 
-Kết quả theo từng session nằm ở results/live_attack_session_results.csv; theo nhóm kịch bản nằm ở results/live_attack_scenario_metrics.csv. Dashboard hiển thị bảng so sánh, tỷ lệ cảnh báo theo kịch bản, risk scorer, dự đoán gateway và lịch sử bố trí.
+Các số trên là phép đo phát hiện hành vi cũ, không phải bằng chứng so sánh vị trí A-HMA với B-RF. Sau khi nạp token mới vào cả hai registry, cần chạy lại capture/train; kết quả hit theo vị trí sẽ nằm trong live_attack_placement_session_results.csv, live_attack_placement_scenario_metrics.csv và live_attack_metrics.json. Dashboard tách bảng token hit này khỏi chỉ số phân loại Random Forest.
 
 ## 7. Chạy benchmark tổng hợp tùy chọn
 
@@ -134,6 +206,6 @@ Lệnh tạo results/ab_query_results.csv, results/ab_metrics.csv, results/ab_sc
 - PhoneLab là workload SQL thật trên SQLite di động, nhưng không có nhãn tấn công và khác miền so với MySQL doanh nghiệp.
 - LANL có sự kiện an ninh doanh nghiệp và mốc Red Team, nhưng không phải query log database.
 - Kết quả lab không đo gateway alert end-to-end cho mọi MySQL client và không xác nhận hiệu năng trên người dùng hoặc hành vi chưa thấy.
-- Paper chính tập trung sinh và triển khai honeytoken quan hệ bằng HMA/SDV. Random Forest/adaptive placement là phần mở rộng đồ án.
+- Bài báo gốc dùng HMA/SDV để sinh dữ liệu quan hệ nhiều bảng, triển khai/giám sát honeytoken và đánh giá độ tin cậy bằng con người. Demo A là bản tham chiếu giáo dục; chưa tái hiện human evaluation và chưa khẳng định tái tạo đầy đủ các chiến lược triển khai. Demo B bổ sung Random Forest cho phân bổ vị trí theo rủi ro và phân tích cảnh báo hành vi.
 
 Tài liệu: [Bytebase Employee Sample Database](https://github.com/bytebase/employee-sample-database/tree/main/mysql); [bài báo gốc DOI 10.1016/j.cose.2024.104032](https://doi.org/10.1016/j.cose.2024.104032); [SDV](https://docs.sdv.dev/sdv); [PhoneLab SQL trace paper](https://odin.cse.buffalo.edu/papers/2015/TPCTC-sqlite-final.pdf); [LANL Cyber Security Research datasets](https://csr.lanl.gov/data/).

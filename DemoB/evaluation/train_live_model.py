@@ -114,9 +114,8 @@ def main():
         random_state=401,
         n_jobs=-1,
     )
-    # Nested validation: choose the threshold using only four repeats, then
-    # evaluate it on the untouched fifth repeat. Rotate the held-out repeat.
-    # This prevents using the same sessions both to tune and report the cutoff.
+    # Nested validation: hold out one complete repeat at a time. This prevents
+    # sessions from the same repeat leaking between threshold tuning and scoring.
     repeats = np.asarray([int(row["repeat"]) for row in b_rows])
     eval_scores = np.zeros(len(y), dtype=float)
     eval_predictions = np.zeros(len(y), dtype=int)
@@ -168,7 +167,7 @@ def main():
         "threshold": threshold,
         "threshold_selection": "OOF session scores; maximize recall/F1 subject to session FPR <= 10%",
         "calibration_session_metrics": calibration_session_metrics,
-        "evaluation": "Nested validation: threshold tuned on four repeats, evaluated on untouched fifth repeat; rotated across five repeats",
+        "evaluation": f"Nested validation: hold out one repeat at a time; {len(set(repeats))} paired repeats",
         "evaluation_thresholds_by_repeat": repeat_thresholds,
         "scenarios": sorted({row["scenario_type"] for row in b_rows}),
         "warning": "Controlled lab evidence only. Do not claim real-world attack efficacy.",
@@ -263,10 +262,71 @@ def main():
     write_csv(session_path, session_rows)
     write_csv(scenario_path, scenario_rows)
 
+    # Measure placement by observed token returns, separately from classifier
+    # alerts. Exclude the explicit canary probe from the core attack metric.
+    placement_session_rows = []
+    for demo, session_id in keys:
+        entries = [row for row in rows if row["demo"] == demo and row["session_id"] == session_id]
+        query_hits = sum(int(row["static_honeytoken_hit"]) for row in entries)
+        placement_session_rows.append({
+            "demo": demo, "session_id": session_id,
+            "scenario_type": entries[0]["scenario_type"],
+            "actual_label": int(entries[0]["actual_label"]),
+            "query_count": len(entries), "token_hit_queries": query_hits,
+            "token_rows_returned": sum(int(row.get("hit_count", 0)) for row in entries),
+            "token_hit_session": int(query_hits > 0),
+            "query_hit_rate": query_hits / len(entries) if entries else 0.0,
+            "is_core_attack": int(int(entries[0]["actual_label"]) == 1 and entries[0]["scenario_type"] != "token_probe_validation"),
+            "is_primary_placement_attack": int(
+                entries[0]["scenario_type"].startswith("target_department_")
+                and not entries[0]["scenario_type"].endswith("_latest_250")
+            ),
+        })
+    placement_scenario_rows = []
+    for demo, family in sorted({(row["demo"], row["scenario_type"]) for row in placement_session_rows}):
+        selected = [row for row in placement_session_rows if row["demo"] == demo and row["scenario_type"] == family]
+        total_queries = sum(row["query_count"] for row in selected)
+        total_hits = sum(row["token_hit_queries"] for row in selected)
+        placement_scenario_rows.append({
+            "demo": demo, "scenario_type": family,
+            "actual_label": selected[0]["actual_label"], "sessions": len(selected),
+            "token_hit_sessions": sum(row["token_hit_session"] for row in selected),
+            "session_hit_rate": float(np.mean([row["token_hit_session"] for row in selected])),
+            "query_count": total_queries, "token_hit_queries": total_hits,
+            "token_rows_returned": sum(row["token_rows_returned"] for row in selected),
+            "query_hit_rate": total_hits / total_queries if total_queries else 0.0,
+            "is_primary_placement_attack": int(
+                family.startswith("target_department_") and not family.endswith("_latest_250")
+            ),
+        })
+    placement_summary = {}
+    for demo in ("Demo A", "Demo B"):
+        selected = [row for row in placement_session_rows if row["demo"] == demo and row["is_primary_placement_attack"]]
+        queries = sum(row["query_count"] for row in selected)
+        hits = sum(row["token_hit_queries"] for row in selected)
+        placement_summary[demo] = {
+            "attack_sessions": len(selected),
+            "token_hit_sessions": sum(row["token_hit_session"] for row in selected),
+            "session_hit_rate": float(np.mean([row["token_hit_session"] for row in selected])) if selected else 0.0,
+            "attack_queries": queries, "token_hit_queries": hits,
+            "token_rows_returned": sum(row["token_rows_returned"] for row in selected),
+            "query_hit_rate": hits / queries if queries else 0.0,
+        }
+    placement_session_path = RESULTS / "live_attack_placement_session_results.csv"
+    placement_scenario_path = RESULTS / "live_attack_placement_scenario_metrics.csv"
+    write_csv(placement_session_path, placement_session_rows)
+    write_csv(placement_scenario_path, placement_scenario_rows)
+
     result = {
         "source": "actual read-only MySQL SELECT telemetry from localhost",
         "shared_dataset": "employee",
         "sessions": int(len(session_rows)),
+        "repeats": int(len(set(int(value) for value in repeats))),
+        "target_departments": sorted({
+            row["scenario_type"].split("_")[2]
+            for row in rows
+            if row["scenario_type"].startswith("target_department_")
+        }),
         "scenario_families": metadata["scenarios"],
         "label_policy": "scenario script labels attack-like sessions as 1 and control sessions as 0",
         "ml_evaluation": "Demo B telemetry; nested held-out repeat evaluation; threshold tuned only on other repeats; not production incident labels",
@@ -275,6 +335,14 @@ def main():
         "threshold_calibration_session_metrics": calibration_session_metrics,
         "query_level_metrics": query_summary,
         "session_level_metrics": session_summary,
+        "placement_evaluation": {
+            "metric": "observed honeytoken hits; classifier alerts are excluded",
+            "primary_scenario": "paired target-department reads: seeded sample of 25 and 25 earliest hire dates, across every configured department; latest-250 is reported as a saturation diagnostic, not included in the headline",
+            "core_attack_policy": "headline uses target_department_*_sample_25 and target_department_*_early_hire_25; latest-250 and explicit token_probe_validation are excluded",
+            "session_level_metrics": placement_summary,
+            "session_results_csv": str(placement_session_path),
+            "scenario_metrics_csv": str(placement_scenario_path),
+        },
         "query_results_csv": str(INPUT_PATH),
         "session_results_csv": str(session_path),
         "scenario_metrics_csv": str(scenario_path),

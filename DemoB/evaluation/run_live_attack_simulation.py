@@ -75,7 +75,7 @@ def load_fixture(values):
         db.close()
 
 
-def scenarios(employee_ids, departments, seed, token_ids):
+def scenarios(employee_ids, departments, seed, token_ids, target_departments):
     rng = random.Random(seed)
     ids = employee_ids[:]
     rng.shuffle(ids)
@@ -96,6 +96,16 @@ def scenarios(employee_ids, departments, seed, token_ids):
     add("rapid_id_enumeration", 1, [("range", (lo, lo + 9999))
         for lo in range(10001, 920051, 10000)])
     add("department_sweep", 1, [("department", (dept,)) for dept in departments])
+    # Replay each target and access strategy identically against A and B.
+    # Latest-ID is a saturation diagnostic; placement evidence also uses a
+    # seeded sample and an independent business attribute (hire date).
+    for dept in target_departments:
+        add(f"target_department_{dept}_latest_250", 1,
+            [("target_department_latest", (dept,))])
+        add(f"target_department_{dept}_sample_25", 1,
+            [("target_department_sample", (dept, seed * 100 + len(cases)))])
+        add(f"target_department_{dept}_early_hire_25", 1,
+            [("target_department_early_hire", (dept,))])
     add("broad_employee_collection", 1, [("batch", (tuple(ids[74:120]),)) for _ in range(8)])
     # Low-and-slow is a paced series of real point reads; wait is capped at 100 ms.
     add("low_and_slow_targeting", 1, [("slow_point", (value,)) for value in ids[20:30]])
@@ -115,8 +125,14 @@ def execute_operation(cursor, operation):
         cursor.execute("SELECT emp_no,first_name,last_name,hire_date FROM employee WHERE emp_no IN (" + marks + ") LIMIT 100", values)
     elif kind == "range":
         cursor.execute("SELECT emp_no,first_name,last_name,hire_date FROM employee WHERE emp_no BETWEEN %s AND %s ORDER BY emp_no LIMIT 1000", args)
-    elif kind == "department":
-        cursor.execute("SELECT e.emp_no,e.first_name,e.last_name,e.hire_date FROM employee e JOIN dept_emp d ON d.emp_no=e.emp_no WHERE d.dept_no=%s AND d.to_date='9999-01-01' ORDER BY e.emp_no LIMIT 250", args)
+    elif kind in {"department", "target_department_latest", "target_department_early_hire", "target_department_sample"}:
+        if kind == "target_department_sample":
+            cursor.execute("SELECT e.emp_no,e.first_name,e.last_name,e.hire_date FROM employee e JOIN dept_emp d ON d.emp_no=e.emp_no WHERE d.dept_no=%s AND d.to_date='9999-01-01' ORDER BY CRC32(CONCAT(e.emp_no, %s)) LIMIT 25", args)
+        else:
+            order = "DESC" if kind == "target_department_latest" else "ASC"
+            limit = 250 if kind == "target_department_latest" else 25
+            order_column = "e.hire_date" if kind == "target_department_early_hire" else "e.emp_no"
+            cursor.execute("SELECT e.emp_no,e.first_name,e.last_name,e.hire_date FROM employee e JOIN dept_emp d ON d.emp_no=e.emp_no WHERE d.dept_no=%s AND d.to_date='9999-01-01' ORDER BY " + order_column + " " + order + f" LIMIT {limit}", (args[0],))
     else:
         raise ValueError(kind)
     return cursor.fetchall()
@@ -130,7 +146,8 @@ def get_token_hits(monitor_cursor, security_db, emp_nos):
     return {int(row[0]) for row in monitor_cursor.fetchall()}
 
 
-def collect_demo(demo, values, employee_ids, departments, repeat):
+def collect_demo(demo, values, employee_ids, departments, repeat, target_departments,
+                 allow_empty_b_tokens=False):
     data = []
     reader = connect(values, "READER")
     monitor = connect(values, "MONITOR", dataset=False)
@@ -141,9 +158,10 @@ def collect_demo(demo, values, employee_ids, departments, repeat):
         frequency = Counter()
         mc.execute(f"SELECT emp_no FROM {TOKEN_DBS[demo]}.honeytoken_registry WHERE is_active=TRUE ORDER BY emp_no")
         token_ids = [int(row[0]) for row in mc.fetchall()]
-        if not token_ids:
+        if not token_ids and not (demo == "Demo B" and allow_empty_b_tokens):
             raise SystemExit(f"No active honeytokens found for {demo}; seed its registry first.")
-        for family, label, ops in scenarios(employee_ids, departments, 7100 + repeat, token_ids):
+        for family, label, ops in scenarios(employee_ids, departments, 7100 + repeat,
+                                            token_ids, target_departments):
             session_id = f"r{repeat}-{family}"
             for index, operation in enumerate(ops, 1):
                 if operation[0] == "slow_point":
@@ -158,10 +176,10 @@ def collect_demo(demo, values, employee_ids, departments, repeat):
                     "scenario_type": family, "actual_label": label,
                     "scenario_id": f"{session_id}-q{index:03d}",
                     "result_count": len(rows), "hour": time.localtime().tm_hour,
-                    "target_table_count": 2 if operation[0] == "department" else 1,
+                    "target_table_count": 2 if operation[0] == "department" or operation[0].startswith("target_department") else 1,
                     "query_frequency": frequency[session_id],
                     "query_duration_ms": duration_ms,
-                    "is_department_query": int(operation[0] == "department"),
+                    "is_department_query": int(operation[0] == "department" or operation[0].startswith("target_department")),
                     "static_honeytoken_hit": int(bool(hits)), "hit_count": len(hits),
                     "query_type": operation[0]})
         cursor.close()
@@ -187,6 +205,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--capture-only", action="store_true",
                         help="Collect read-only MySQL telemetry and labels, but do not train. Run train_live_model.py next.")
+    parser.add_argument("--bootstrap-rf", action="store_true",
+                        help="Allow Demo B registry to be empty while collecting RF training telemetry before creating its first HMA/RF tokens. Not valid for placement evaluation.")
+    parser.add_argument("--target-departments", default=os.getenv("ATTACK_TARGET_DEPARTMENTS"),
+                        help="Comma-separated target departments. Default: all departments in the dataset.")
+    parser.add_argument("--repeats", type=int, default=20,
+                        help="Paired repetitions per scenario (default: 20).")
     parser.add_argument("--train-inline", action="store_true",
                         help="Also run the older session-level evaluation in this script. The documented workflow uses train_live_model.py.")
     args = parser.parse_args()
@@ -194,10 +218,19 @@ def main():
     employee_ids, departments = None, None
     configs = {demo: config_for(demo) for demo in ("Demo A", "Demo B")}
     employee_ids, departments = load_fixture(configs["Demo B"])
+    target_departments = ([value.strip() for value in args.target_departments.split(",") if value.strip()]
+                          if args.target_departments else departments)
+    if args.repeats < 5:
+        raise SystemExit("Use at least 5 repeats; default is 20 for more stable placement estimates.")
+    unknown = sorted(set(target_departments) - set(departments))
+    if not target_departments or unknown:
+        raise SystemExit(f"Invalid --target-departments; unknown departments: {unknown}; available: {departments}")
     for demo in ("Demo A", "Demo B"):
-        for repeat in range(1, 6):
-            print(f"Executing {demo}, repeat {repeat}/5 ...")
-            all_rows.extend(collect_demo(demo, configs[demo], employee_ids, departments, repeat))
+        for repeat in range(1, args.repeats + 1):
+            print(f"Executing {demo}, repeat {repeat}/{args.repeats} ...")
+            all_rows.extend(collect_demo(demo, configs[demo], employee_ids, departments, repeat,
+                                         target_departments,
+                                         allow_empty_b_tokens=args.bootstrap_rf))
 
     OUT.mkdir(parents=True, exist_ok=True)
     csv_path = OUT / "live_attack_query_results.csv"
@@ -307,9 +340,9 @@ def main():
         writer.writeheader()
         writer.writerows(all_rows)
     result = {"source": "live read-only queries to localhost employee database",
-        "shared_dataset": "employee", "repeats": 5, "scenario_families":
-        ["routine_point_lookup", "legitimate_bulk_report", "maintenance_read",
-         "rapid_id_enumeration", "department_sweep", "broad_employee_collection", "low_and_slow_targeting"],
+        "shared_dataset": "employee", "repeats": args.repeats,
+        "target_departments": target_departments,
+        "scenario_families": sorted({row["scenario_type"] for row in all_rows}),
         "label_policy": "scenario script sets attack=1 and normal control=0",
         "ml_evaluation": "Demo B telemetry; GroupKFold by complete session; not production traffic",
         "query_level_metrics": summaries, "session_level_metrics": session_summary,

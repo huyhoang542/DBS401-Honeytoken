@@ -1,15 +1,15 @@
 # Đồ án DBS401 về Honeytoken thích nghi
 
-**Demo A chỉ đóng vai trò bản tham chiếu để đối chiếu với phương pháp bài báo; Demo B mới là phần nâng cấp và đóng góp chính của đồ án.** Demo A tái hiện luồng honeytoken tĩnh/paper-inspired làm baseline. Demo B mở rộng bằng chấm điểm rủi ro Random Forest, telemetry truy vấn và thử nghiệm bố trí token thích nghi. Bảng so sánh dùng Demo A làm mốc để đo hiệu quả nâng cấp của Demo B. Hai demo dùng chung database Employee Sample nhưng có registry và log riêng.
+**Demo A là mốc tham chiếu theo bài báo; Demo B là phần nâng cấp và đóng góp chính.** Demo A dùng SDV/HMA để sinh nội dung các bản ghi mồi và giữ vị trí phòng ban do HMA sinh. Demo B dùng cùng nội dung HMA nhưng Random Forest học điểm rủi ro từ telemetry và chọn phân bố phòng ban. So sánh chính đo token hit khi chạy cùng các kịch bản. Hai demo dùng chung database Employee Sample nhưng có registry riêng.
 
 ## 1. Mục tiêu và phạm vi
 
 Dự án thử nghiệm honeytoken trong MySQL. Honeytoken là bản ghi mồi được đặt trong dữ liệu; khi truy vấn trả về bản ghi đó, hệ thống ghi nhận sự kiện và phát cảnh báo.
 
-- **Demo A:** nhận diện truy cập bằng danh sách ID token đã đăng ký.
-- **Demo B:** phân tích hành vi truy vấn bằng mô hình ML, kết hợp token hit và thử nghiệm chuyển vị trí token.
+- **Demo A:** nội dung honeytoken và vị trí phòng ban được lấy từ SDV/HMA.
+- **Demo B:** nội dung honeytoken vẫn do SDV/HMA sinh; Random Forest chỉ chọn vị trí phòng ban theo rủi ro, không sinh trường dữ liệu của bản ghi.
 
-Demo A lấy cảm hứng từ bài báo *Generation and deployment of honeytokens in relational databases for cyber deception* (2024). Demo A dùng SDV HMASynthesizer để sinh dữ liệu liên kết nhiều bảng. Đây là triển khai giáo dục theo hướng bài báo, không phải tái tạo đầy đủ phương pháp hay đánh giá người dùng trong bài báo.
+Demo A là bản tham chiếu giáo dục theo bài báo *Generation and deployment of honeytokens in relational databases for cyber deception* (2024): dùng SDV HMASynthesizer để sinh dữ liệu liên kết nhiều bảng, triển khai token và phát hiện khi token được truy cập. Vị trí phòng ban A giữ theo quan hệ HMA sinh ra. Không khẳng định đó là thuật toán placement tối ưu hay tái tạo chính xác từng chiến lược triển khai của bài báo khi chưa đối chiếu đầy đủ toàn văn. Đánh giá human believability trong bài báo chưa được tái hiện. Cảnh báo A là quy tắc token-hit, không phải mô hình phân loại hành vi.
 
 ## 2. Nền tảng và dữ liệu
 
@@ -25,7 +25,7 @@ Demo dùng bộ dataset_large từ [Bytebase Employee Sample Database](https://g
 Trong cấu hình A/B dùng chung database:
 
 - Demo A dùng registry honeytoken_security và dải HMA 910051–910100.
-- Demo B dùng registry honeytoken_security_b và dải Faker 910001–910050.
+- Demo B dùng registry honeytoken_security_b và dải HMA 910001–910050; B thay đổi phân bố phòng ban theo RF.
 - Dải Demo A cũ 900001–900050 đã được reset.
 
 ## 3. Tạo honeytoken HMA cho Demo A
@@ -49,7 +49,7 @@ python database\apply_hma_honeytokens.py --apply --admin
 
 Lệnh sẽ hỏi tài khoản MySQL administrator. Tài khoản honey_seeder hiện thiếu quyền INSERT ở bảng dept_manager, do đó khi nạp toàn bộ HMA cần quyền quản trị. Việc nạp được thực hiện trong một transaction.
 
-Manifest hiện ghi 50 bản ghi employee, 467 salary, 55 dept_emp, 1 dept_manager, 74 title. Số dòng con không bằng 50 vì mỗi nhân viên có thể có nhiều khoảng lương, chức danh hoặc phân công.
+Manifest hiện ghi 50 bản ghi employee, 467 salary, 55 dept_emp, 1 dept_manager, 74 title. Generator bảo đảm mỗi token có đúng một phân công phòng ban hiện hành; các dòng con bổ sung có thể là lịch sử lương/chức danh/phòng ban.
 
 ## 4. Registry và giám sát
 
@@ -93,7 +93,7 @@ Kết quả đã lưu ở results/static_baseline_results.csv và results/static
 
 ## 6. Reset và chạy lại A/B
 
-Reset chỉ dành cho môi trường demo. Script xóa các dải token đã quy định, registry và log giám sát; giữ schema và dữ liệu nhân viên thông thường. Chạy từ DemoB bằng quyền quản trị:
+Reset chỉ dành cho môi trường demo. Khi chạy `--apply`, script xóa các dải token đã quy định, registry, log `access_events`/`security_alerts` của cả A và B, cùng các file kết quả/mô hình mà dashboard đọc; giữ schema và dữ liệu nhân viên thông thường. Dashboard sẽ trống cho tới khi bạn tự chạy capture/train hoặc benchmark lại. Chạy từ DemoB bằng quyền quản trị:
 
 ~~~powershell
 Set-Location D:\FPTU\Course\DBS401_Project\DemoB
@@ -106,7 +106,7 @@ Mặc định là dry-run. Chỉ thêm --apply nếu muốn xóa thật:
 .\.venv\Scripts\python.exe database\reset_lab_honeytokens.py --apply
 ~~~
 
-Sau đó sinh/nạp lại HMA theo Mục 3 và seed Demo B theo hướng dẫn trong [README Demo B](../DemoB/README.md). Không chạy reset trên database ngoài môi trường lab.
+Sau đó sinh/nạp lại HMA theo Mục 3 và tạo/nạp candidates B theo [README Demo B](../DemoB/README.md). Không chạy reset trên database ngoài môi trường lab.
 
 ## 7. Kết quả và giới hạn
 

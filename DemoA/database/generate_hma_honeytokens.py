@@ -182,6 +182,23 @@ def remap_synthetic_data(synthetic_data, department_ids, token_start, token_coun
             )
             frame.loc[invalid, "to_date"] = frame.loc[invalid, "from_date"]
 
+    # Each honeytoken must be visible as a current employee in exactly one
+    # department. Preserve HMA's first generated department as Demo A's
+    # placement, and make any additional memberships historical.
+    dept_emp = result["dept_emp"].copy()
+    hire_dates = dict(zip(result["employee"]["emp_no"], result["employee"]["hire_date"]))
+    for emp_no in new_ids:
+        indices = dept_emp.index[dept_emp["emp_no"] == emp_no].tolist()
+        if not indices:
+            raise RuntimeError(f"HMA generated no department row for employee {emp_no}")
+        active_index = indices[0]
+        dept_emp.at[active_index, "from_date"] = hire_dates[emp_no]
+        dept_emp.at[active_index, "to_date"] = "9999-01-01"
+        for historical_index in indices[1:]:
+            if str(dept_emp.at[historical_index, "to_date"]) == "9999-01-01":
+                dept_emp.at[historical_index, "to_date"] = dept_emp.at[historical_index, "from_date"]
+    result["dept_emp"] = dept_emp
+
     # These rows are needed by the existing employee lookup demo.
     for table in ("salary", "dept_emp"):
         covered = set(result[table]["emp_no"])
