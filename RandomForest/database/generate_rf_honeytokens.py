@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT = ROOT.parent
-HMA_DIR = PROJECT / "DemoA" / "database" / "hma_artifacts"
+HMA_DIR = PROJECT / "SDV_HMA" / "database" / "hma_artifacts"
 OUTPUT_DIR = ROOT / "database" / "rf_artifacts"
 TABLES = ("employee", "salary", "dept_emp", "dept_manager", "title")
 SECURITY_DB = "honeytoken_security_b"
@@ -28,7 +28,7 @@ SENTINEL_DATE = "9999-01-01"
 load_dotenv(ROOT / ".env")
 
 # When invoked as ``python database\generate_rf_honeytokens.py``, Python adds
-# the database/ directory (not DemoB/) to sys.path. Add the project root so
+# the database/ directory (not RandomForest/) to sys.path. Add the project root so
 # the shared adaptive placement allocator can be imported reliably.
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -38,7 +38,7 @@ def read_hma_candidates():
     manifest_path = HMA_DIR / "manifest.json"
     if not manifest_path.exists():
         raise SystemExit(
-            "Missing Demo A HMA candidates. Run from DemoA: "
+            "Missing Demo A HMA candidates. Run from SDV_HMA: "
             "python database\\generate_hma_honeytokens.py (or --reuse-model)."
         )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -73,7 +73,7 @@ def connect_reader():
     user = os.getenv("READER_USER")
     password = os.getenv("READER_PASSWORD")
     if not user or not password or password.startswith("YOUR_"):
-        raise SystemExit("Set READER_USER and READER_PASSWORD in DemoB/.env")
+        raise SystemExit("Set READER_USER and READER_PASSWORD in RandomForest/.env")
     return mysql.connector.connect(
         host=os.getenv("DB_HOST", "localhost"),
         port=int(os.getenv("DB_PORT", "3306")),

@@ -322,6 +322,8 @@ def main():
         "shared_dataset": "employee",
         "sessions": int(len(session_rows)),
         "repeats": int(len(set(int(value) for value in repeats))),
+        "ml_evaluation_status": "UPDATED",
+        "ml_evaluation_message": "ML evaluation and placement-hit metrics were updated from the same captured run.",
         "target_departments": sorted({
             row["scenario_type"].split("_")[2]
             for row in rows

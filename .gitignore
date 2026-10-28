@@ -9,10 +9,15 @@
 *.py[cod]
 
 # Local Git metadata from the existing Demo A checkout
-DemoA/.git/
+SDV_HMA/.git/
 
 # Local databases and generated mutable state
 **/results/*.sqlite3
 **/results/placement_history.csv
+RandomForest/results/
+SDV_HMA/results/
+RandomForest/models/
+RandomForest/database/rf_artifacts/
+SDV_HMA/database/hma_artifacts/
 .DS_Store
 Thumbs.db

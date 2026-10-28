@@ -11,8 +11,8 @@ Hai demo dùng Employee Sample Database, cùng ngân sách token và cùng kịc
 
 ## Bắt đầu
 
-1. Làm theo [hướng dẫn Demo A](DemoA/README.md) để chuẩn bị database và baseline.
-2. Làm theo [hướng dẫn Demo B](DemoB/README.md) để chạy phần nâng cấp, huấn luyện mô hình và dashboard.
-3. Xem [kết quả đối chiếu](DemoB/comparison/RESULTS.md) và [nguồn dữ liệu/phương pháp](DemoB/comparison/PAPER_AND_TRAINING_DATA.md).
+1. Làm theo [hướng dẫn Demo A](SDV_HMA/README.md) để chuẩn bị database và baseline.
+2. Làm theo [hướng dẫn Demo B](RandomForest/README.md) để chạy phần nâng cấp, huấn luyện mô hình và dashboard.
+3. Xem [kết quả đối chiếu](RandomForest/comparison/RESULTS.md) và [nguồn dữ liệu/phương pháp](RandomForest/comparison/PAPER_AND_TRAINING_DATA.md).
 4. Tài liệu tổng hợp: [Nguồn dữ liệu và kết quả demo](Nguon_du_lieu_va_ket_qua_demo_Honeytoken.docx).
 

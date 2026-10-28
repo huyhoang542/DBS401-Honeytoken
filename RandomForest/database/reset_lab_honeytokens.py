@@ -25,22 +25,22 @@ RANGES = {
 CHILD_TABLES = ("salary", "dept_emp", "dept_manager", "title")
 SECURITY_DATABASES = ("honeytoken_security", "honeytoken_security_b")
 DASHBOARD_ARTIFACTS = (
-    "DemoB/results/ab_metrics.csv",
-    "DemoB/results/ab_metrics.json",
-    "DemoB/results/ab_query_results.csv",
-    "DemoB/results/ab_scenario_metrics.csv",
-    "DemoB/results/behavior_events.sqlite3",
-    "DemoB/results/live_attack_metrics.json",
-    "DemoB/results/live_attack_query_results.csv",
-    "DemoB/results/live_attack_session_results.csv",
-    "DemoB/results/live_attack_scenario_metrics.csv",
-    "DemoB/results/live_attack_placement_session_results.csv",
-    "DemoB/results/live_attack_placement_scenario_metrics.csv",
-    "DemoB/results/placement_history.csv",
-    "DemoB/models/random_forest_live_sim.joblib",
-    "DemoB/models/live_sim_model_metadata.json",
-    "DemoB/models/random_forest_synthetic.joblib",
-    "DemoB/models/model_metadata.json",
+    "RandomForest/results/ab_metrics.csv",
+    "RandomForest/results/ab_metrics.json",
+    "RandomForest/results/ab_query_results.csv",
+    "RandomForest/results/ab_scenario_metrics.csv",
+    "RandomForest/results/behavior_events.sqlite3",
+    "RandomForest/results/live_attack_metrics.json",
+    "RandomForest/results/live_attack_query_results.csv",
+    "RandomForest/results/live_attack_session_results.csv",
+    "RandomForest/results/live_attack_scenario_metrics.csv",
+    "RandomForest/results/live_attack_placement_session_results.csv",
+    "RandomForest/results/live_attack_placement_scenario_metrics.csv",
+    "RandomForest/results/placement_history.csv",
+    "RandomForest/models/random_forest_live_sim.joblib",
+    "RandomForest/models/live_sim_model_metadata.json",
+    "RandomForest/models/random_forest_synthetic.joblib",
+    "RandomForest/models/model_metadata.json",
 )
 
 
@@ -61,8 +61,8 @@ def main():
     parser.add_argument("--apply", action="store_true", help="Commit the bounded reset.")
     args = parser.parse_args()
 
-    env_a = dotenv_values(PROJECT / "DemoA" / ".env")
-    env_b = dotenv_values(PROJECT / "DemoB" / ".env")
+    env_a = dotenv_values(PROJECT / "SDV_HMA" / ".env")
+    env_b = dotenv_values(PROJECT / "RandomForest" / ".env")
     hosts = {env_a.get("DB_HOST", "localhost"), env_b.get("DB_HOST", "localhost")}
     ports = {int(env_a.get("DB_PORT", "3306")), int(env_b.get("DB_PORT", "3306"))}
     if not hosts <= {"localhost", "127.0.0.1"} or len(ports) != 1:

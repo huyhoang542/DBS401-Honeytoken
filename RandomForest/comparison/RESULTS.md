@@ -57,7 +57,7 @@ On this synthetic benchmark, Random Forest risk scoring improves recall by 61.47
 
 ## Reproduce
 
-From `DemoB/`, after preparing the dataset and installing `requirements.txt`:
+From `RandomForest/`, after preparing the dataset and installing `requirements.txt`:
 
 ```powershell
 .\.venv\Scripts\python.exe evaluation\run_common_scenarios.py

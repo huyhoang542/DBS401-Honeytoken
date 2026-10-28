@@ -13,7 +13,7 @@
 Demo B có gateway truy vấn, bộ thu telemetry, Random Forest, dashboard Streamlit và mô-đun thử nghiệm adaptive placement. Cài thư viện:
 
 ~~~powershell
-Set-Location D:\FPTU\Course\DBS401_Project\DemoB
+Set-Location D:\FPTU\Course\DBS401_Project\RandomForest
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
@@ -29,7 +29,7 @@ Copy-Item .env.example .env
 ### Bước 1 — xem trước phạm vi xóa
 
 ~~~powershell
-Set-Location D:\FPTU\Course\DBS401_Project\DemoB
+Set-Location D:\FPTU\Course\DBS401_Project\RandomForest
 .\.venv\Scripts\Activate.ps1
 python database\reset_lab_honeytokens.py
 ~~~
@@ -47,7 +47,7 @@ Chạy sau khi dry-run hiển thị đúng phạm vi. Script hỏi lại thông 
 ### Bước 3 — sinh và nạp Demo A bằng HMA
 
 ~~~powershell
-Set-Location D:\FPTU\Course\DBS401_Project\DemoA
+Set-Location D:\FPTU\Course\DBS401_Project\SDV_HMA
 .\.venv\Scripts\Activate.ps1
 ~~~
 
@@ -66,7 +66,7 @@ Lệnh thứ hai là dry-run. Kiểm tra dòng ứng viên và dải ID trước
 Capture khởi tạo dùng huấn luyện RF khi B chưa có token; **không dùng kết quả này so sánh vị trí**. Capture sẽ ghi đè CSV kết quả truy vấn. Sao lưu file hiện có trước nếu cần giữ lại:
 
 ~~~powershell
-Set-Location D:\FPTU\Course\DBS401_Project\DemoB
+Set-Location D:\FPTU\Course\DBS401_Project\RandomForest
 .\.venv\Scripts\Activate.ps1
 if (Test-Path .\results\live_attack_query_results.csv) { Copy-Item .\results\live_attack_query_results.csv .\results\live_attack_query_results.before-reset.csv }
 python evaluation\run_live_attack_simulation.py --capture-only --bootstrap-rf
@@ -143,7 +143,7 @@ Chỉ dùng --apply sau khi kiểm tra đề xuất và đã cấp quyền UPDAT
 
 ## 4. Huấn luyện từ telemetry và dashboard
 
-Để capture và huấn luyện lại từ đầu, hai registry phải có 50 token hoạt động, và hai file .env phải dùng chung DB_NAME=employee. Từ thư mục DemoB:
+Để capture và huấn luyện lại từ đầu, hai registry phải có 50 token hoạt động, và hai file .env phải dùng chung DB_NAME=employee. Từ thư mục RandomForest:
 
 ~~~powershell
 python evaluation\run_live_attack_simulation.py --capture-only

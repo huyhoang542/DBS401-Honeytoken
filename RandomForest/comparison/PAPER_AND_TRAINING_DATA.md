@@ -50,7 +50,7 @@ Nguồn liên quan có log truy vấn SQL thực như PhoneLab nhưng không có
 
 ## Chạy capture và huấn luyện sau khi người dùng sẵn sàng
 
-Từ thư mục `DemoB/`, sau khi cả A và B đã có candidate/token và `.env` trỏ cùng DB `employee`:
+Từ thư mục `RandomForest/`, sau khi cả A và B đã có candidate/token và `.env` trỏ cùng DB `employee`:
 
 ```powershell
 python evaluation\run_live_attack_simulation.py --capture-only

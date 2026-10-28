@@ -32,10 +32,10 @@ Trong cấu hình A/B dùng chung database:
 
 Quá trình gồm sinh ứng viên và nạp ứng viên. Generator huấn luyện HMA từ các bảng employee, dept_emp, dept_manager, salary, title; bảng department được giữ làm danh mục tham chiếu. Generator không ghi vào MySQL. Ứng viên được lưu trong database/hma_artifacts/.
 
-Từ thư mục DemoA, mở PowerShell:
+Từ thư mục SDV_HMA, mở PowerShell:
 
 ~~~powershell
-Set-Location D:\FPTU\Course\DBS401_Project\DemoA
+Set-Location D:\FPTU\Course\DBS401_Project\SDV_HMA
 .\.venv\Scripts\Activate.ps1
 python database\generate_hma_honeytokens.py
 python database\apply_hma_honeytokens.py
@@ -93,10 +93,10 @@ Kết quả đã lưu ở results/static_baseline_results.csv và results/static
 
 ## 6. Reset và chạy lại A/B
 
-Reset chỉ dành cho môi trường demo. Khi chạy `--apply`, script xóa các dải token đã quy định, registry, log `access_events`/`security_alerts` của cả A và B, cùng các file kết quả/mô hình mà dashboard đọc; giữ schema và dữ liệu nhân viên thông thường. Dashboard sẽ trống cho tới khi bạn tự chạy capture/train hoặc benchmark lại. Chạy từ DemoB bằng quyền quản trị:
+Reset chỉ dành cho môi trường demo. Khi chạy `--apply`, script xóa các dải token đã quy định, registry, log `access_events`/`security_alerts` của cả A và B, cùng các file kết quả/mô hình mà dashboard đọc; giữ schema và dữ liệu nhân viên thông thường. Dashboard sẽ trống cho tới khi bạn tự chạy capture/train hoặc benchmark lại. Chạy từ RandomForest bằng quyền quản trị:
 
 ~~~powershell
-Set-Location D:\FPTU\Course\DBS401_Project\DemoB
+Set-Location D:\FPTU\Course\DBS401_Project\RandomForest
 .\.venv\Scripts\python.exe database\reset_lab_honeytokens.py
 ~~~
 
@@ -106,11 +106,11 @@ Mặc định là dry-run. Chỉ thêm --apply nếu muốn xóa thật:
 .\.venv\Scripts\python.exe database\reset_lab_honeytokens.py --apply
 ~~~
 
-Sau đó sinh/nạp lại HMA theo Mục 3 và tạo/nạp candidates B theo [README Demo B](../DemoB/README.md). Không chạy reset trên database ngoài môi trường lab.
+Sau đó sinh/nạp lại HMA theo Mục 3 và tạo/nạp candidates B theo [README Demo B](../RandomForest/README.md). Không chạy reset trên database ngoài môi trường lab.
 
 ## 7. Kết quả và giới hạn
 
-Kết quả chi tiết của Demo A và so sánh A/B được lưu trong results/ của từng demo và DemoB/comparison/RESULTS.md. So sánh công bằng cần dùng chung dataset, ngân sách token, bộ kịch bản, nhãn và quy trình đánh giá. Không dùng kết quả huấn luyện làm kết quả kiểm tra.
+Kết quả chi tiết của Demo A và so sánh A/B được lưu trong results/ của từng demo và RandomForest/comparison/RESULTS.md. So sánh công bằng cần dùng chung dataset, ngân sách token, bộ kịch bản, nhãn và quy trình đánh giá. Không dùng kết quả huấn luyện làm kết quả kiểm tra.
 
 HMA học cấu trúc và phân bố bản ghi; điều đó không tự chứng minh token khó phân biệt. Dải ID liên tiếp có thể bị nhận ra. Demo A cũng chưa giám sát mọi câu SQL bên ngoài gateway và bộ kiểm thử 100 truy vấn chỉ là kiểm tra chức năng.
 

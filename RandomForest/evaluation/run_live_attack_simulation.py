@@ -29,10 +29,11 @@ FEATURES = ["result_count", "hour", "target_table_count", "query_frequency",
 TOKEN_DBS = {"Demo A": "honeytoken_security", "Demo B": "honeytoken_security_b"}
 READERS = {"Demo A": "READER", "Demo B": "READER"}
 MONITORS = {"Demo A": "MONITOR", "Demo B": "MONITOR"}
+DEMO_DIRS = {"Demo A": "SDV_HMA", "Demo B": "RandomForest"}
 
 
 def config_for(demo):
-    path = PROJECT / demo.replace(" ", "") / ".env"
+    path = PROJECT / DEMO_DIRS[demo] / ".env"
     values = dotenv_values(path)
     if not path.exists():
         raise SystemExit(f"Missing {path}; prepare both demos' .env files first.")
@@ -220,7 +221,7 @@ def main():
     employee_ids, departments = load_fixture(configs["Demo B"])
     target_departments = ([value.strip() for value in args.target_departments.split(",") if value.strip()]
                           if args.target_departments else departments)
-    if args.repeats < 5:
+    if args.repeats < 2:
         raise SystemExit("Use at least 5 repeats; default is 20 for more stable placement estimates.")
     unknown = sorted(set(target_departments) - set(departments))
     if not target_departments or unknown:

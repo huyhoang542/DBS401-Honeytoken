@@ -136,7 +136,10 @@ with tab_placement:
             and int(data.get("repeats", 0)) >= 5
         )
         if not has_updated_protocol:
-            st.warning("Các số liệu đang hiển thị được tạo theo giao thức cũ (truy vấn 250 ID cao nhất), có thể bị bão hòa. Chưa có kết quả của bộ kịch bản mới; hãy chạy capture/train thủ công theo README trước khi kết luận.")
+            if any(name.endswith("_sample_25") for name in families_present) and any(name.endswith("_early_hire_25") for name in families_present):
+                st.warning(f"Đã có kết quả kịch bản mục tiêu mới với {data.get('repeats', 0)} lần lặp. Đây là kết quả sơ bộ; nên chạy ít nhất 5 lần để so sánh ổn định hơn.")
+            else:
+                st.warning("Các số liệu đang hiển thị được tạo theo giao thức cũ (truy vấn 250 ID cao nhất), có thể bị bão hòa. Chưa có kết quả của bộ kịch bản mới; hãy chạy capture/train thủ công theo README trước khi kết luận.")
         if summary:
             rows = []
             for demo, label in (("Demo A", "A — SDV/HMA (vị trí HMA)"), ("Demo B", "B — SDV/HMA + Random Forest (vị trí theo rủi ro)")):
@@ -189,6 +192,8 @@ with tab_live:
     live_queries_path = ROOT / "results" / "live_attack_query_results.csv"
     if live_metrics_path.exists() and live_sessions_path.exists():
         live = json.loads(live_metrics_path.read_text(encoding="utf-8"))
+        if live.get("ml_evaluation_status") == "NOT_UPDATED":
+            st.warning(live.get("ml_evaluation_message", "Kết quả ML chưa được cập nhật cho capture mới nhất."))
         summary = live.get("session_level_metrics", {})
         show_metric_table(summary, [
             "Demo A static honeytoken",
@@ -292,7 +297,7 @@ with tab_live:
                                    file_name="log_truy_van_mysql_lab.csv", mime="text/csv", key="dl_live_queries")
                 st.caption("Đơn vị thời lượng là mili giây (ms); giờ là giờ tại máy khi chạy. Nếu log có cột dự đoán ML, đó là dự đoán giữ lại ngoài fold (out-of-fold); nếu không có, mô hình chỉ được báo cáo ở mức phiên.")
     else:
-        st.info("Chưa có kết quả MySQL lab. Từ thư mục DemoB chạy: `python evaluation\\run_live_attack_simulation.py --capture-only`, sau đó `python evaluation\\train_live_model.py`.")
+        st.info("Chưa có kết quả MySQL lab. Từ thư mục RandomForest chạy: `python evaluation\\run_live_attack_simulation.py --capture-only`, sau đó `python evaluation\\train_live_model.py`.")
 
 with tab_synth:
     st.header("Benchmark hành vi tổng hợp")
@@ -387,4 +392,4 @@ with tab_synth:
             st.download_button("Tải log mẫu đang lọc (CSV)", filtered.to_csv(index=False).encode("utf-8-sig"),
                                file_name="log_benchmark_tong_hop.csv", mime="text/csv", key="dl_synth")
     else:
-        st.info("Chưa có benchmark. Từ thư mục DemoB chạy: `python evaluation\\run_common_scenarios.py`.")
+        st.info("Chưa có benchmark. Từ thư mục RandomForest chạy: `python evaluation\\run_common_scenarios.py`.")
